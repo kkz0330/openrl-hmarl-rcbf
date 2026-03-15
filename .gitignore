@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE
+.idea/workspace.xml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
