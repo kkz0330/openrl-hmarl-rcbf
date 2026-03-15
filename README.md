@@ -1,78 +1,80 @@
-# INE 原油行情可视化与预测
+# INE Crude Dashboard (TqSdk)
 
-本项目基于天勤量化 `tqsdk` 读取 INE 原油（`sc`）行情，生成一个可直接打开的网页报告，展示：
+This project reads INE crude futures (`sc`) market data from TqSdk and generates an HTML dashboard with:
 
-- 现在价格（主连）
-- 开盘价格（主连）
-- 各合约增减仓（以及乘以合约乘数后的桶数）
-- 期限结构（按交割月）
-- 行情图（1小时K线）
-- 24小时价格预测（点估计 + 区间）
+- Current main-contract price
+- Main-contract open price
+- Contract OI change (lots) and OI change x multiplier (barrels)
+- Term structure by delivery month
+- Main-contract 1H candlestick chart
+- Multi-model 24h forecasts (with validation metrics)
 
-## 目录结构
+## Files
 
-- `ine_crude_dashboard.py`：主程序，连接天勤接口并生成网页
-- `ine_crude_dashboard.html`：示例输出网页
-- `generate_assignment_report.py`、`assignment_report.pdf`：原项目已有文件
+- `ine_crude_dashboard.py`: data fetch + forecasting + HTML rendering
+- `ine_crude_dashboard.html`: generated dashboard output
 
-## 环境要求
-
-- Python 3.10+
-- 可访问天勤行情服务网络
-- 有效天勤账号密码
-
-安装依赖：
+## Install
 
 ```bash
-pip install tqsdk pandas plotly flask numpy
+pip install tqsdk pandas numpy plotly flask
 ```
 
-## 使用方法
-
-在项目根目录运行：
+## Run
 
 ```bash
-python ine_crude_dashboard.py --user <你的天勤账号> --password <你的天勤密码>
+python ine_crude_dashboard.py --user <TQ_USER> --password <TQ_PASSWORD>
 ```
 
-可选参数：
+Optional:
 
-- `--output`：输出 HTML 路径（默认 `ine_crude_dashboard.html`）
+- `--output`: output HTML path (default: `ine_crude_dashboard.html`)
 
-示例：
+## Result Snapshot (Sample Run)
 
-```bash
-python ine_crude_dashboard.py --user demo --password demo --output output.html
-```
+Run time: `2026-03-15 23:59:55 +08:00`  
+Dashboard file: [`ine_crude_dashboard.html`](./ine_crude_dashboard.html)
 
-## 如何打开网页
+### Market Snapshot
 
-方式1：直接双击 HTML 文件  
-方式2：PowerShell 命令打开
+| Item | Value |
+|---|---|
+| Main Price | 786.80 |
+| Main Open | 728.30 |
+| Underlying of Main | INE.sc2604 |
+| Strongest OI Increase | INE.sc2605, +5,232 lots, +5,232,000 barrels |
+| Strongest OI Decrease | INE.sc2604, -6,638 lots, -6,638,000 barrels |
+| Best Forecast Model | HoltLinear |
 
-```powershell
-Start-Process "C:\Users\shirosk\Documents\New project\ine_crude_dashboard.html"
-```
+### Model Comparison (Validation + 24h Forecast)
 
-方式3：本地静态服务访问
+| Model | MAE | RMSE | 24h Forecast | 95% Band |
+|---|---:|---:|---:|---|
+| LinearTrend | 37.293 | 40.230 | 779.99 | [747.21, 812.77] |
+| EWMA | 73.349 | 76.396 | 747.99 | [706.12, 789.86] |
+| AR1LogReturn | 38.298 | 41.355 | 830.40 | [797.69, 863.12] |
+| HoltLinear | 26.222 | 32.512 | 904.34 | [847.15, 961.52] |
 
-```powershell
-cd "C:\Users\shirosk\Documents\New project"
-python -m http.server 8000
-```
+Note: This snapshot is only an example and will change with live market updates.
 
-浏览器访问：`http://localhost:8000/ine_crude_dashboard.html`
+## Forecasting Methods
 
-## 计算口径说明
+The dashboard runs 4 methods in parallel on the same close-price series:
 
-- 增减仓（手）=`open_interest - pre_open_interest`
-- 增减仓乘数后（桶）=`增减仓(手) * volume_multiple`
-- 当前最明显增仓/减仓合约：按 `增减仓(手)` 在全体未到期合约中取最大/最小
-- 预测模型：默认使用最近 240 根 1 小时K线做线性回归外推 24 小时，并给出基于残差波动的区间
+1. `LinearTrend`: linear regression trend extrapolation
+2. `EWMA`: exponential weighted moving-average level
+3. `AR1LogReturn`: AR(1) on log returns, then rebuild price path
+4. `HoltLinear`: Holt double exponential smoothing
 
-## 注意事项
+Model comparison:
 
-- 当前主图使用 `KQ.m@INE.sc`（主连），换月时可能出现价格跳变，这是主连合约机制本身导致。
-- 预测结果仅用于演示，不构成任何投资建议。
-- 若网络或账号认证失败，程序会报错退出，请先检查网络和账号状态。
+- Validation split: recent holdout slice from the latest 240 hourly bars
+- Metrics: MAE and RMSE
+- Best model: the one with minimum validation MAE
 
+The page shows all model lines and a model metrics table.
+
+## Notes
+
+- Main chart uses `KQ.m@INE.sc` (main contract). Contract rollover can cause jumps.
+- Forecasts are for analysis/demo only, not investment advice.
