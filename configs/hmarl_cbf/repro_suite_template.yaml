@@ -1,0 +1,38 @@
+suite:
+  name: hmarl_cbf_repro
+  seeds: [0, 1, 2]
+  total_iterations: 200
+  eval_interval: 10
+  output_dir: artifacts/repro
+
+experiments:
+  - name: full_sync_hmarl_cbf
+    description: Full model baseline.
+    overrides: {}
+
+  - name: no_intrinsic_reward
+    description: Disable intrinsic reward contribution in low-level return processing.
+    overrides:
+      train:
+        low_ext_reward_coef: 1.0
+
+  - name: no_clf_soft
+    description: Remove CLF pressure by setting very small weight proxy in low-level policy setup.
+    overrides:
+      notes:
+        disable_clf_soft: true
+
+  - name: no_lidar
+    description: Replace lidar beams with near-constant input as an ablation.
+    overrides:
+      env:
+        lidar_beams: 8
+        lidar_noise_std: 0.0
+      notes:
+        flatten_lidar: true
+
+  - name: single_level
+    description: Disable high-level switching and force a fixed skill.
+    overrides:
+      notes:
+        fixed_skill_id: 4

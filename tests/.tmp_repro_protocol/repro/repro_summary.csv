@@ -1,0 +1,5 @@
+suite_name,experiment,seed,total_iterations,final_success_rate,final_collision_rate,final_reach_rate,final_qp_feasible_rate,final_avg_episode_return,final_avg_steps,final_loss_high,final_loss_low
+dummy_suite,exp_a,0,3,0.6,0.15000000000000002,0.6,1.0,2.0,10.0,0.1,0.2
+dummy_suite,exp_a,1,3,0.6,0.15000000000000002,0.6,1.0,2.0,10.0,0.1,0.2
+dummy_suite,exp_b,0,3,0.7,0.1,0.7,1.0,3.0,10.0,0.2,0.4
+dummy_suite,exp_b,1,3,0.7,0.1,0.7,1.0,3.0,10.0,0.2,0.4

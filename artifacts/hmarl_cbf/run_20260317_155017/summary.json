@@ -1,0 +1,33 @@
+{
+  "seed": 42,
+  "total_iterations": 1000,
+  "final_eval": {
+    "eval_n_episodes": 3.0,
+    "eval_success_rate": 0.0,
+    "eval_reach_rate": 0.5,
+    "eval_collision_rate": 0.08333333333333333,
+    "eval_safe_reach_ratio": 0.5,
+    "eval_min_h_agent": 0.5356835126876831,
+    "eval_min_h_obstacle": -0.004238724708557129,
+    "eval_avg_traj_length": 10.910656808203688,
+    "eval_avg_skill_switches": 9.333333333333334,
+    "eval_qp_feasible_rate": 1.0,
+    "eval_avg_steps": 181.0,
+    "eval_avg_episode_return": 12.658244749113607
+  },
+  "last_eval_during_train": {
+    "eval_n_episodes": 1.0,
+    "eval_success_rate": 0.0,
+    "eval_reach_rate": 0.5,
+    "eval_collision_rate": 0.0,
+    "eval_safe_reach_ratio": 0.5,
+    "eval_min_h_agent": 0.5357062816619873,
+    "eval_min_h_obstacle": 1.6217013597488403,
+    "eval_avg_traj_length": 12.420438415127137,
+    "eval_avg_skill_switches": 10.0,
+    "eval_qp_feasible_rate": 1.0,
+    "eval_avg_steps": 200.0,
+    "eval_avg_episode_return": 13.171360230701977
+  },
+  "run_dir": "artifacts/hmarl_cbf/run_20260317_155017"
+}

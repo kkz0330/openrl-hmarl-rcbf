@@ -1,0 +1,16 @@
+{
+  "final_eval": {
+    "eval_success_rate": 0.7,
+    "eval_collision_rate": 0.1,
+    "eval_reach_rate": 0.7,
+    "eval_qp_feasible_rate": 1.0,
+    "eval_avg_episode_return": 3.0,
+    "eval_avg_steps": 10.0
+  },
+  "last_high": {
+    "loss_total": 0.2
+  },
+  "last_low": {
+    "loss_mean": 0.4
+  }
+}
