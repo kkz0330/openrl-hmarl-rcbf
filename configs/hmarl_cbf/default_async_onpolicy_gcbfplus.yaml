@@ -27,7 +27,7 @@ env:
   reward_oob_penalty: 1.0
 
 synchronization:
-  mode: sync
+  mode: async
   t_sync_max: 20
 
 safety:
@@ -51,7 +51,7 @@ skills:
     ref_speed: 1.2
     d_min_agent: 0.6
     d_safe_obs: 0.6
-    cbf_mode: distributed_ecbf
+    cbf_mode: distributed_gcbfplus
     cbf_share_agent: 0.5
     cbf_share_obs: 1.0
     use_input_bounds: true

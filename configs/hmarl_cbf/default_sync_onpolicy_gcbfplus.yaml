@@ -27,6 +27,7 @@ env:
   reward_oob_penalty: 1.0
 
 synchronization:
+  mode: sync
   t_sync_max: 20
 
 safety:

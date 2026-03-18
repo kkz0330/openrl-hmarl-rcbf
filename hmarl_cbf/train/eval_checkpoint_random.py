@@ -142,6 +142,7 @@ def _build_eval_trainer(cfg: Dict[str, Any], deterministic: bool) -> TrainerSync
         coordinator=SyncCoordinator(
             num_agents=int(cfg["env"]["n_agents"]),
             t_sync_max=int(cfg["synchronization"]["t_sync_max"]),
+            mode=str(cfg["synchronization"].get("mode", "sync")),
         ),
         buffer=HierRolloutBuffer(),
         skill_runtime=runtime,
@@ -222,17 +223,25 @@ def _evaluate_once(
         )
         beta = {aid: bool(skill_out[aid].beta) for aid in agent_ids}
         sync_res = trainer.coordinator.step(beta)
-        sync_switch = bool(sync_res.sync_switch or terminated or truncated)
+        forced_end = bool(terminated or truncated)
+        switched_agents = set(sync_res.switch_agents)
+        if forced_end:
+            switched_agents = set(agent_ids)
 
         for aid in agent_ids:
             reached_any[aid] = bool(reached_any[aid] or bool(info.get("reach_flags", {}).get(aid, False)))
             unsafe_any[aid] = bool(unsafe_any[aid] or bool(info.get("unsafe_flags", {}).get(aid, False)))
 
         obs = next_obs
-        if sync_switch and not (terminated or truncated):
+        if (len(switched_agents) > 0) and not (terminated or truncated):
             sampled = _sample_high_skills(trainer, obs, agent_ids, deterministic=deterministic)
             states_round = {s.agent_id: s for s in trainer.env.get_agent_states()}
-            active = _activate_round_with_hover_fallback(trainer, sampled, states_round)
+            changed = _activate_round_with_hover_fallback(
+                trainer,
+                {aid: int(sampled[aid]) for aid in switched_agents},
+                states_round,
+            )
+            active.update(changed)
         if terminated or truncated:
             break
 

@@ -383,7 +383,7 @@ class TrainerSyncOnPolicy:
                 out[aid] = {"skill_id": int(z[idx]), "logp": float(logp[idx]), "value": float(value[idx])}
             return out
 
-        # Start first synchronized option round.
+        # Start first option round.
         sampled = _sample_high(obs)
         states0 = {s.agent_id: s for s in self.env.get_agent_states()}
         actual = self.activate_round_skills(
@@ -392,7 +392,7 @@ class TrainerSyncOnPolicy:
         )
         for aid in agent_ids:
             self.start_high_option(
-                k=self.coordinator.k,
+                k=int(self.coordinator.option_k[aid]),
                 agent_id=aid,
                 t_start=self.coordinator.t,
                 obs_high=obs[aid]["high"],
@@ -421,8 +421,10 @@ class TrainerSyncOnPolicy:
             )
             beta = {aid: bool(skill_out[aid].beta) for aid in agent_ids}
             step_sync = self.coordinator.step(beta)
-            forced_sync = bool(terminated or truncated)
-            sync_switch = bool(step_sync.sync_switch or forced_sync)
+            forced_end = bool(terminated or truncated)
+            switched_agents = set(step_sync.switch_agents)
+            if forced_end:
+                switched_agents = set(agent_ids)
 
             for aid in agent_ids:
                 unsafe = bool(info.get("unsafe_flags", {}).get(aid, False))
@@ -441,7 +443,7 @@ class TrainerSyncOnPolicy:
                         reward_int=float(skill_out[aid].intrinsic_reward),
                         reward_ext=float(rewards[aid]),
                         done=done,
-                        sync_switch=sync_switch,
+                        sync_switch=bool(aid in switched_agents),
                         terminated_by_skill=bool(skill_out[aid].beta),
                         info={
                             "qp_feasible": bool(control_outputs[aid].solution.feasible),
@@ -475,29 +477,31 @@ class TrainerSyncOnPolicy:
             last_obs = next_obs
             obs = next_obs
 
-            if sync_switch:
+            if len(switched_agents) > 0:
                 t_end = self.coordinator.t
-                for aid in agent_ids:
-                    self.close_high_option(
-                        agent_id=aid,
-                        t_end=t_end,
-                        return_ext=round_return_ext[aid],
-                        done=done_by_agent[aid],
-                        sync_switch=True,
-                        info={"forced_sync": forced_sync},
-                    )
-                if terminated or truncated:
+                for aid in switched_agents:
+                    if self.buffer.has_open_high_option(aid):
+                        self.close_high_option(
+                            agent_id=aid,
+                            t_end=t_end,
+                            return_ext=round_return_ext[aid],
+                            done=done_by_agent[aid],
+                            sync_switch=True,
+                            info={"forced_sync": forced_end},
+                        )
+                if forced_end:
                     break
 
                 sampled = _sample_high(obs)
                 states_round = {s.agent_id: s for s in self.env.get_agent_states()}
+                new_skills = {aid: int(sampled[aid]["skill_id"]) for aid in switched_agents}
                 actual = self.activate_round_skills(
-                    skill_map={aid: int(sampled[aid]["skill_id"]) for aid in agent_ids},
+                    skill_map=new_skills,
                     states=states_round,
                 )
-                for aid in agent_ids:
+                for aid in switched_agents:
                     self.start_high_option(
-                        k=self.coordinator.k,
+                        k=int(step_sync.option_k[aid]),
                         agent_id=aid,
                         t_start=self.coordinator.t,
                         obs_high=obs[aid]["high"],
@@ -729,10 +733,12 @@ class TrainerSyncOnPolicy:
                 )
                 beta = {aid: bool(skill_out[aid].beta) for aid in agent_ids}
                 sync_res = self.coordinator.step(beta)
-                forced_sync = bool(terminated or truncated)
-                sync_switch = bool(sync_res.sync_switch or forced_sync)
-                if sync_switch:
-                    skill_switches += 1
+                forced_end = bool(terminated or truncated)
+                switched_agents = set(sync_res.switch_agents)
+                if forced_end:
+                    switched_agents = set(agent_ids)
+                if len(switched_agents) > 0:
+                    skill_switches += int(len(switched_agents))
 
                 current_pos = np.stack([next_states[aid].position for aid in agent_ids], axis=0).astype(np.float32)
                 trace_positions.append(current_pos)
@@ -761,10 +767,11 @@ class TrainerSyncOnPolicy:
                     min_h_obs = min(min_h_obs, float(m.min_h_obstacle))
 
                 obs = next_obs
-                if sync_switch and not (terminated or truncated):
+                if (len(switched_agents) > 0) and not (terminated or truncated):
                     sampled = _sample_high(obs)
                     states_round = {s.agent_id: s for s in self.env.get_agent_states()}
-                    self.activate_round_skills(skill_map=sampled, states=states_round)
+                    new_skills = {aid: int(sampled[aid]) for aid in switched_agents}
+                    self.activate_round_skills(skill_map=new_skills, states=states_round)
                 if terminated or truncated:
                     break
 

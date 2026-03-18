@@ -238,6 +238,7 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         coordinator=SyncCoordinator(
             num_agents=int(cfg["env"]["n_agents"]),
             t_sync_max=int(cfg["synchronization"]["t_sync_max"]),
+            mode=str(cfg["synchronization"].get("mode", "sync")),
         ),
         buffer=HierRolloutBuffer(),
         skill_runtime=runtime,
