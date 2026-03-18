@@ -14,6 +14,9 @@ from hmarl_cbf.control.constraint_builder import ConstraintBuilder
 from hmarl_cbf.control.qp_solver import DifferentiableQPSolver
 from hmarl_cbf.types import AgentObsLow, AgentState, QPParam, QPProblem, QPSolution
 
+R_DIAG_MIN = 1e-2
+R_DIAG_MAX = 50.0
+
 
 @dataclass(slots=True)
 class LowLevelControlOutput:
@@ -173,7 +176,7 @@ class LowLevelSafeController:
                 skill_u_ref=np.asarray(skill_u_ref, dtype=np.float32).reshape(2),
             )
         fused_f_lin = -(
-            np.asarray(qp_param.r_diag, dtype=np.float32).reshape(2)
+            np.clip(np.asarray(qp_param.r_diag, dtype=np.float32).reshape(2), R_DIAG_MIN, R_DIAG_MAX)
             * np.asarray(fused_u_ref, dtype=np.float32).reshape(2)
         )
         problem = self.constraint_builder.build_for_agent(

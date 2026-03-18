@@ -6,6 +6,9 @@ import numpy as np
 
 from hmarl_cbf.types import AgentState, QPParam, QPProblem
 
+R_DIAG_MIN = 1e-2
+R_DIAG_MAX = 50.0
+
 
 class ConstraintBuilder:
     """Builds distributed hard-CBF and soft-CLF constraints for one agent."""
@@ -187,6 +190,7 @@ class ConstraintBuilder:
 
         u_ref_eff = np.asarray(qp_param.u_ref if u_ref_override is None else u_ref_override, dtype=np.float32).reshape(2)
         r_diag = np.asarray(qp_param.r_diag, dtype=np.float32).reshape(2)
+        r_diag = np.clip(r_diag, R_DIAG_MIN, R_DIAG_MAX).astype(np.float32)
         if f_lin_override is not None:
             f_lin = np.asarray(f_lin_override, dtype=np.float32).reshape(2)
         elif qp_param.f_lin is not None:

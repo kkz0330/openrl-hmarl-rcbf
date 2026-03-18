@@ -1,0 +1,108 @@
+seed: 42
+env:
+  n_agents: 4
+  n_obstacles: 3
+  world_size: 10.0
+  dt: 0.1
+  horizon: 200
+  action_limit: 2.0
+  velocity_limit: 2.0
+  agent_radius: 0.2
+  goal_threshold: 0.3
+  goal_speed_threshold: 0.1
+  lidar_beams: 32
+  lidar_range: 4.5
+  lidar_noise_std: 0.0
+  neighbor_radius: 3.0
+  max_neighbors: 4
+  min_start_goal_separation: 1.0
+  min_agent_separation: 0.8
+  min_obstacle_clearance: 0.4
+  terminate_on_collision: true
+  reward_progress_weight: 0.2
+  reward_time_penalty: 0.01
+  reward_reach_bonus: 1.0
+  reward_collision_penalty: 1.0
+  reward_oob_penalty: 1.0
+synchronization:
+  mode: async
+  t_sync_max: 20
+safety:
+  d_min_agent: 0.6
+  d_safe_obs: 0.6
+skills:
+  names:
+  - turn_left
+  - turn_right
+  - accelerate
+  - decelerate
+  - cruise
+  - hover
+  default_max_duration: 20
+  params:
+    goal_threshold: 0.3
+    goal_speed_threshold: 0.1
+    action_limit: 2.0
+    turn_min_speed: 0.2
+    turn_target_angle: 0.6
+    turn_heading_tol: 0.2
+    turn_vmag: 0.8
+    turn_track_kp: 1.0
+    target_speed: 1.2
+    decelerate_target_speed: 0.3
+    ref_speed: 1.2
+    d_min_agent: 0.6
+    d_safe_obs: 0.6
+    cbf_mode: distributed_gcbfplus
+    cbf_share_agent: 0.5
+    cbf_share_obs: 1.0
+    use_input_bounds: true
+    w_accel: 0.05
+    w_turn: 0.03
+    w_speed_dev: 0.04
+    w_heading_dev: 0.02
+    w_progress: 0.02
+    hover_speed_tol: 0.1
+    hover_goal_kp: 1.2
+    hover_vel_kd: 1.0
+    w_hover_stop: 0.08
+    w_hover_goal: 0.08
+model:
+  high_hidden_dim: 128
+  low_hidden_dim: 128
+  action_dim: 2
+high_level_mappo:
+  clip_ratio: 0.2
+  entropy_coef: 0.01
+  value_coef: 0.5
+  max_grad_norm: 0.5
+  ppo_epochs: 4
+  minibatch_size: 64
+  normalize_advantages: true
+qp:
+  backend: cvxpylayers
+  use_stub_if_unavailable: true
+train:
+  rollout_steps: 200
+  total_iterations: 100
+  eval_interval: 10
+  gamma_high: 0.99
+  lam_high: 0.95
+  gamma_low: 0.99
+  low_ext_reward_coef: 0.0
+  low_update_mode: onpolicy_ppo
+  low_update_epochs: 1
+  low_max_samples_per_iter: 256
+  low_target_step_scale: 0.05
+  low_ppo_epochs: 2
+  low_ppo_clip_ratio: 0.2
+  low_ppo_value_coef: 0.5
+  low_ppo_entropy_coef: 0.0
+  low_ppo_max_grad_norm: 0.5
+  low_policy_action_std: 0.2
+  low_normalize_advantages: true
+buffer_postprocess:
+  gamma_high: 0.99
+  lam_high: 0.95
+  gamma_low: 0.99
+  low_ext_reward_coef: 0.0

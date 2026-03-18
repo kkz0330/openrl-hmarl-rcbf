@@ -1,0 +1,34 @@
+{
+  "seed": 42,
+  "total_iterations": 100,
+  "final_eval": {
+    "eval_n_episodes": 3.0,
+    "eval_success_rate": 0.0,
+    "eval_reach_rate": 0.0,
+    "eval_collision_rate": 0.25,
+    "eval_safe_reach_ratio": 0.0,
+    "eval_min_h_agent": -0.06280955672264099,
+    "eval_min_h_obstacle": 1.6448123455047607,
+    "eval_avg_traj_length": 10.277986586734187,
+    "eval_avg_skill_switches": 25.333333333333332,
+    "eval_qp_feasible_rate": 1.0,
+    "eval_avg_steps": 120.33333333333333,
+    "eval_avg_episode_return": -0.12909909804662092
+  },
+  "last_eval_during_train": {
+    "eval_n_episodes": 1.0,
+    "eval_success_rate": 0.0,
+    "eval_reach_rate": 0.0,
+    "eval_collision_rate": 0.5,
+    "eval_safe_reach_ratio": 0.0,
+    "eval_min_h_agent": -8.086860179901123e-05,
+    "eval_min_h_obstacle": 3.0563435554504395,
+    "eval_avg_traj_length": 4.737636025878601,
+    "eval_avg_skill_switches": 12.0,
+    "eval_qp_feasible_rate": 1.0,
+    "eval_avg_steps": 45.0,
+    "eval_avg_episode_return": -0.17875605523586272
+  },
+  "run_dir": "artifacts/hmarl_cbf/train_lowppo",
+  "warmstart_low_hfg": {}
+}

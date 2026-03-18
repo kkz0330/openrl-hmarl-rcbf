@@ -18,6 +18,9 @@ except ImportError:  # pragma: no cover - import-safe fallback
 
 from hmarl_cbf.types import QPProblem, QPSolution
 
+R_DIAG_MIN = 1e-2
+R_DIAG_MAX = 50.0
+
 
 class DifferentiableQPSolver:
     """cvxpylayers-backed QP solver with a deterministic fallback path."""
@@ -47,12 +50,13 @@ class DifferentiableQPSolver:
 
     def _solve_stub(self, problem: QPProblem) -> QPSolution:
         r_diag = np.asarray(problem.r_diag, dtype=np.float32).reshape(-1)
+        r_diag = np.clip(r_diag, R_DIAG_MIN, R_DIAG_MAX).astype(np.float32)
         if problem.f_lin is not None:
             f_lin = np.asarray(problem.f_lin, dtype=np.float32).reshape(-1)
         else:
             u_ref = np.asarray(problem.u_ref, dtype=np.float32).reshape(-1)
             f_lin = -(r_diag * u_ref)
-        action = (-f_lin / np.maximum(r_diag, 1e-5)).astype(np.float32)
+        action = (-f_lin / np.maximum(r_diag, R_DIAG_MIN)).astype(np.float32)
         action = np.clip(action, np.asarray(problem.u_min, dtype=np.float32), np.asarray(problem.u_max, dtype=np.float32))
         slack = np.asarray([max(problem.delta_min, 0.0)], dtype=np.float32)
         objective = np.asarray([0.0], dtype=np.float32)
@@ -118,6 +122,7 @@ class DifferentiableQPSolver:
 
         layer = self._build_layer(A_cbf.shape[0], A_clf.shape[0], n_u)
         r_diag = np.asarray(problem.r_diag, dtype=np.float32).reshape(-1)
+        r_diag = np.clip(r_diag, R_DIAG_MIN, R_DIAG_MAX).astype(np.float32)
         if problem.f_lin is not None:
             f_lin = np.asarray(problem.f_lin, dtype=np.float32).reshape(-1)
         else:

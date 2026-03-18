@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>hmarl_cbf_algorithm_full_spec</title>
+  <style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+</head>
+<body>
+<h1 id="hmarl-cbf-算法实现全说明当前代码版">HMARL-CBF
+算法实现全说明（当前代码版）</h1>
+<p>本文档对应当前仓库 <code>hmarl_cbf/</code> 的实现，统一说明： -
+代码结构 - 算法逻辑结构（上层/下层/环境/技能/同步协议） -
+关键数学式子（动力学、奖励、MAPPO、QP/CBF/CLF、下层损失） -
+默认配置与可切换项 - 训练与评测入口</p>
+<h2 id="代码结构总览">1. 代码结构总览</h2>
+<p>主模块：<code>hmarl_cbf/</code></p>
+<ul>
+<li><code>env/</code>
+<ul>
+<li><code>multi_uav_2d_env.py</code>: 2D
+多智能体环境（双积分器、障碍、奖励、终止）</li>
+<li><code>lidar.py</code>: LiDAR 扫描模型</li>
+<li><code>observation.py</code>: 高层/低层观测拼装</li>
+</ul></li>
+<li><code>skills/</code>
+<ul>
+<li><code>library.py</code>: 技能定义（<code>turn_left/right</code>,
+<code>accelerate</code>, <code>decelerate</code>, <code>cruise</code>,
+<code>hover</code>）</li>
+<li><code>runtime.py</code>:
+技能运行时（激活、计时、终止、内在奖励）</li>
+<li><code>termination.py</code>: 技能终止统一入口</li>
+</ul></li>
+<li><code>policies/</code>
+<ul>
+<li><code>high_level.py</code>: 上层离散技能策略 + value 网络</li>
+<li><code>low_level_qp.py</code>: 下层 QP 参数网络 + 低层 value 头</li>
+</ul></li>
+<li><code>control/</code>
+<ul>
+<li><code>constraint_builder.py</code>: 构建硬 CBF + 软 CLF +
+输入限幅约束</li>
+<li><code>qp_solver.py</code>: 非可微 QP 求解（ECOS/SCS +
+fallback）</li>
+<li><code>diff_qp.py</code>: 可微 QP（KKT 反传路径）</li>
+<li><code>low_level_controller.py</code>: 下层控制链路（技能参考融合 +
+QP）</li>
+<li><code>sync_coordinator.py</code>: sync/async 技能切换协调器</li>
+</ul></li>
+<li><code>high_level/</code>
+<ul>
+<li><code>mappo.py</code>: 上层 MAPPO 更新器</li>
+</ul></li>
+<li><code>buffer/</code>
+<ul>
+<li><code>hier_rollout_buffer.py</code>: 分层回放（步级低层 +
+轮次级高层）</li>
+</ul></li>
+<li><code>train/</code>
+<ul>
+<li><code>trainer_sync_onpolicy.py</code>:
+主训练器（rollout/update/eval）</li>
+<li><code>run_sync_onpolicy.py</code>: 训练入口</li>
+<li><code>eval_checkpoint_random.py</code>: 随机场景评测入口</li>
+</ul></li>
+<li><code>types.py</code>
+<ul>
+<li>数据结构定义（状态、观测、QP、transition 等）</li>
+</ul></li>
+</ul>
+<p>配置目录：<code>configs/hmarl_cbf/</code></p>
+<ul>
+<li><code>default_async_onpolicy_gcbfplus.yaml</code>（当前常用）</li>
+<li><code>default_sync_onpolicy.yaml</code></li>
+<li><code>default_sync_onpolicy_gcbfplus.yaml</code></li>
+</ul>
+<h2 id="任务与系统建模">2. 任务与系统建模</h2>
+<h3 id="状态与控制">2.1 状态与控制</h3>
+<p>每个智能体状态（2D 双积分器）：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>x</mi><mi>i</mi></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>p</mi><mi>x</mi></msub><mo>,</mo><mspace width="0.222em"></mspace><msub><mi>p</mi><mi>y</mi></msub><mo>,</mo><mspace width="0.222em"></mspace><msub><mi>v</mi><mi>x</mi></msub><mo>,</mo><mspace width="0.222em"></mspace><msub><mi>v</mi><mi>y</mi></msub><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+x_i = [p_x,\ p_y,\ v_x,\ v_y]
+</annotation></semantics></math></p>
+<p>控制输入：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>u</mi><mi>i</mi></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">[</mo><msub><mi>a</mi><mi>x</mi></msub><mo>,</mo><mspace width="0.222em"></mspace><msub><mi>a</mi><mi>y</mi></msub><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+u_i = [a_x,\ a_y]
+</annotation></semantics></math></p>
+<p>环境离散更新（见 <code>env/multi_uav_2d_env.py</code>）：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>v</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">p</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>v</mi><mi>t</mi></msub><mo>+</mo><msub><mi>u</mi><mi>t</mi></msub><mspace width="0.167em"></mspace><mi>d</mi><mi>t</mi><mo>,</mo><mspace width="0.222em"></mspace><mo>−</mo><msub><mi>v</mi><mo>max</mo></msub><mo>,</mo><mspace width="0.222em"></mspace><msub><mi>v</mi><mo>max</mo></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
+v_{t+1} = \mathrm{clip}(v_t + u_t\,dt,\ -v_{\max},\ v_{\max})
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>p</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mo>=</mo><msub><mi>p</mi><mi>t</mi></msub><mo>+</mo><msub><mi>v</mi><mrow><mi>t</mi><mo>+</mo><mn>1</mn></mrow></msub><mspace width="0.167em"></mspace><mi>d</mi><mi>t</mi></mrow><annotation encoding="application/x-tex">
+p_{t+1} = p_t + v_{t+1}\,dt
+</annotation></semantics></math></p>
+<p>并对动作先做 <code>action_limit</code> 限幅。</p>
+<h3 id="终止条件">2.2 终止条件</h3>
+<p>单智能体到达条件：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="postfix">∥</mo><mi>p</mi><mo>−</mo><msub><mi>p</mi><mtext mathvariant="normal">goal</mtext></msub><mo stretchy="false" form="postfix">∥</mo><mo>≤</mo><mtext mathvariant="normal">goal_threshold</mtext></mrow><annotation encoding="application/x-tex">
+\|p - p_{\text{goal}}\| \le \text{goal\_threshold}
+</annotation></semantics></math></p>
+<p>且</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mo stretchy="false" form="postfix">∥</mo><mi>v</mi><mo stretchy="false" form="postfix">∥</mo><mo>≤</mo><mtext mathvariant="normal">goal_speed_threshold</mtext></mrow><annotation encoding="application/x-tex">
+\|v\| \le \text{goal\_speed\_threshold}
+</annotation></semantics></math></p>
+<p>episode 终止： - 全体到达，或 -
+<code>terminate_on_collision=true</code> 且任意不安全（碰撞或出界），或
+- 到达 <code>horizon</code>（truncated）。</p>
+<h2 id="观测结构部分可观测">3. 观测结构（部分可观测）</h2>
+<p>每个智能体高层观测 <code>obs_high</code>： -
+<code>self_state = [p_x, p_y, v_x, v_y]</code> -
+<code>goal_relative = goal - position</code> -
+<code>neighbor_summary</code>（最多 <code>max_neighbors</code>，每个邻居
+4 维：相对位置 2 + 相对速度 2）</p>
+<p>每个智能体低层观测 <code>obs_low</code>： - <code>self_state</code> -
+<code>goal_relative</code> -
+<code>lidar_scan</code>（<code>N_beam</code> 束，归一化到
+<code>[0,1]</code>） - <code>neighbor_summary</code></p>
+<p>LiDAR 模型（<code>env/lidar.py</code>）： -
+每束做射线-圆障碍/邻居求交，取最近距离 - 未命中返回
+<code>max_range</code> -
+可选高斯噪声：<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>𝒩</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo>,</mo><msup><mi>σ</mi><mn>2</mn></msup><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">\mathcal{N}(0,\sigma^2)</annotation></semantics></math></p>
+<h2 id="技能层7-元组映射">4. 技能层（7 元组映射）</h2>
+<p>实现技能： - <code>turn_left</code>, <code>turn_right</code>,
+<code>accelerate</code>, <code>decelerate</code>, <code>cruise</code>,
+<code>hover</code></p>
+<p><code>SkillSpec</code> 含 7 元组字段： - 启动集函数
+<code>initiation_set_fn</code> - 中止集函数
+<code>termination_set_fn</code> - 最大时长 <code>max_duration</code> -
+中止函数 <code>termination_fn(state, ctx, tau)</code> - 安全集函数
+<code>safety_constraints_fn</code> - 内在奖励函数
+<code>intrinsic_reward_fn</code> -
+安全技能策略（参考动作）<code>safe_skill_policy</code></p>
+<p>技能终止逻辑：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>β</mi><mi>i</mi></msub><mo>=</mo><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">m</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">t</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">n</mi><mi mathvariant="normal">_</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">n</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mi>⋅</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
+\beta_i = \mathrm{termination\_fn}(\cdot)
+</annotation></semantics></math></p>
+<p>通常实现为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mrow><mo stretchy="true" form="prefix">(</mo><mtext mathvariant="normal">in termination_set</mtext><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="0.222em"></mspace><mo>∨</mo><mspace width="0.222em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><mi>τ</mi><mo>≥</mo><mtext mathvariant="normal">max_duration</mtext><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
+(\text{in termination\_set})\ \lor\ (\tau \ge \text{max\_duration})
+</annotation></semantics></math></p>
+<h2 id="分层控制与执行协议">5. 分层控制与执行协议</h2>
+<h3 id="总体结构">5.1 总体结构</h3>
+<p>每步链路： 1. 上层（按轮次）给技能 <code>z_i</code> 2. 下层网络输入
+<code>(obs_low, z_i)</code> 输出 <code>QPParam</code> 3. 技能策略输出
+<code>u_ref_skill</code> 4. 融合参考 5. 构建 QP 约束（CBF/CLF/输入限幅）
+6. 求解 QP 得执行动作 <code>u</code></p>
+<p>融合参考：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>u</mi><mtext mathvariant="normal">ref</mtext><mtext mathvariant="normal">fused</mtext></msubsup><mo>=</mo><msub><mi>w</mi><mtext mathvariant="normal">skill</mtext></msub><msubsup><mi>u</mi><mtext mathvariant="normal">ref</mtext><mtext mathvariant="normal">skill</mtext></msubsup><mo>+</mo><mrow><mo stretchy="true" form="prefix">(</mo><mn>1</mn><mo>−</mo><msub><mi>w</mi><mtext mathvariant="normal">skill</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow><msubsup><mi>u</mi><mtext mathvariant="normal">ref</mtext><mtext mathvariant="normal">policy</mtext></msubsup></mrow><annotation encoding="application/x-tex">
+u_{\text{ref}}^{\text{fused}}
+= w_{\text{skill}}u_{\text{ref}}^{\text{skill}}
++ (1-w_{\text{skill}})u_{\text{ref}}^{\text{policy}}
+</annotation></semantics></math></p>
+<h3 id="syncasync-切换sync_coordinator.py">5.2 sync/async
+切换（<code>sync_coordinator.py</code>）</h3>
+<p><code>mode=sync</code>：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">sync_switch</mtext><mo>=</mo><mrow><mi mathvariant="normal">a</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">l</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>β</mi><mi>i</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="0.222em"></mspace><mo>∨</mo><mspace width="0.222em"></mspace><mo>max</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>τ</mi><mi>i</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>≥</mo><msub><mi>T</mi><mtext mathvariant="normal">sync_max</mtext></msub></mrow><annotation encoding="application/x-tex">
+\text{sync\_switch}=\mathrm{all}(\beta_i)\ \lor\ \max(\tau_i)\ge T_{\text{sync\_max}}
+</annotation></semantics></math></p>
+<p><code>mode=async</code>： - 智能体
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>
+若
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>β</mi><mi>i</mi></msub><mo>=</mo><mn>1</mn></mrow><annotation encoding="application/x-tex">\beta_i=1</annotation></semantics></math>
+或
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>τ</mi><mi>i</mi></msub><mo>≥</mo><msub><mi>T</mi><mtext mathvariant="normal">sync_max</mtext></msub></mrow><annotation encoding="application/x-tex">\tau_i\ge T_{\text{sync\_max}}</annotation></semantics></math>
+则单独切换技能 - 未触发切换的智能体保持当前技能</p>
+<h2 id="上层mappo离散技能">6. 上层：MAPPO（离散技能）</h2>
+<p>策略网络（<code>policies/high_level.py</code>）： - backbone:
+<code>MLP(Tanh)</code> -&gt; <code>actor logits</code> +
+<code>value</code> - 动作为离散技能 id（Categorical）</p>
+<p>MAPPO 更新（<code>high_level/mappo.py</code>）：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>r</mi><mo>=</mo><mo>exp</mo><mrow><mo stretchy="true" form="prefix">(</mo><mo>log</mo><msub><mi>p</mi><mtext mathvariant="normal">new</mtext></msub><mo>−</mo><mo>log</mo><msub><mi>p</mi><mtext mathvariant="normal">old</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
+r = \exp(\log p_{\text{new}}-\log p_{\text{old}})
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mtext mathvariant="normal">actor</mtext></msub><mo>=</mo><mi>−</mi><mi>𝔼</mi><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">[</mo><mo>min</mo><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><mi>r</mi><mi>A</mi><mo>,</mo><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">p</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mi>r</mi><mo>,</mo><mn>1</mn><mo>−</mo><mi>ϵ</mi><mo>,</mo><mn>1</mn><mo>+</mo><mi>ϵ</mi><mo stretchy="true" form="postfix">)</mo></mrow><mi>A</mi><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+L_{\text{actor}}
+= -\mathbb{E}\!\left[
+\min\!\left(rA,\ \mathrm{clip}(r,1-\epsilon,1+\epsilon)A\right)
+\right]
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mtext mathvariant="normal">clip</mtext></msub><mo>=</mo><msub><mi>V</mi><mtext mathvariant="normal">old</mtext></msub><mo>+</mo><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">p</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>V</mi><mtext mathvariant="normal">new</mtext></msub><mo>−</mo><msub><mi>V</mi><mtext mathvariant="normal">old</mtext></msub><mo>,</mo><mi>−</mi><mi>ϵ</mi><mo>,</mo><mi>ϵ</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
+V_{\text{clip}} = V_{\text{old}} + \mathrm{clip}(V_{\text{new}}-V_{\text{old}},-\epsilon,\epsilon)
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mtext mathvariant="normal">value</mtext></msub><mo>=</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><mspace width="0.167em"></mspace><mi>𝔼</mi><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">[</mo><mo>max</mo><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>V</mi><mtext mathvariant="normal">new</mtext></msub><mo>−</mo><mi>R</mi><mo stretchy="true" form="postfix">)</mo></mrow><mn>2</mn></msup><mo>,</mo><mspace width="0.222em"></mspace><msup><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>V</mi><mtext mathvariant="normal">clip</mtext></msub><mo>−</mo><mi>R</mi><mo stretchy="true" form="postfix">)</mo></mrow><mn>2</mn></msup><mo stretchy="true" form="postfix">)</mo></mrow><mo stretchy="true" form="postfix">]</mo></mrow></mrow><annotation encoding="application/x-tex">
+L_{\text{value}}
+= \frac{1}{2}\,\mathbb{E}\!\left[
+\max\!\left((V_{\text{new}}-R)^2,\ (V_{\text{clip}}-R)^2\right)
+\right]
+</annotation></semantics></math></p>
+<p>总损失：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mtext mathvariant="normal">high</mtext></msub><mo>=</mo><msub><mi>L</mi><mtext mathvariant="normal">actor</mtext></msub><mo>+</mo><msub><mi>c</mi><mi>v</mi></msub><msub><mi>L</mi><mtext mathvariant="normal">value</mtext></msub><mo>−</mo><msub><mi>c</mi><mtext mathvariant="normal">ent</mtext></msub><mi>H</mi></mrow><annotation encoding="application/x-tex">
+L_{\text{high}} = L_{\text{actor}} + c_v L_{\text{value}} - c_{\text{ent}}H
+</annotation></semantics></math></p>
+<p>高层样本来自高层 option 片段：
+<code>(obs_high, z, logp, value, return_ext, advantage, value_target)</code>。</p>
+<h2 id="下层参数化-qp-可微求解">7. 下层：参数化 QP + 可微求解</h2>
+<h3 id="下层网络输出">7.1 下层网络输出</h3>
+<p><code>low_level_qp.py</code> 输出： - <code>u_ref</code>（2维） -
+<code>r_diag</code>（二次项对角，softplus 保正） -
+<code>w_clf</code>（CLF 松弛权重，softplus 保正） -
+<code>cbf_k0, cbf_k1</code>（CBF 增益，softplus 保正） -
+<code>clf_k</code>（CLF 增益，softplus 保正） - 低层 value
+头：<code>low_value(obs_low, skill_id)</code></p>
+<h3 id="qp-标准型">7.2 QP 标准型</h3>
+<p><code>constraint_builder.py</code> 构建：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><munder><mo>min</mo><mrow><mi>u</mi><mo>,</mo><mi>δ</mi></mrow></munder><mspace width="0.222em"></mspace><mfrac><mn>1</mn><mn>2</mn></mfrac><msup><mi>u</mi><mi>⊤</mi></msup><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">g</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>r</mi><mtext mathvariant="normal">diag</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow><mi>u</mi><mo>+</mo><msup><mi>f</mi><mi>⊤</mi></msup><mi>u</mi><mo>+</mo><msub><mi>w</mi><mtext mathvariant="normal">clf</mtext></msub><mi>δ</mi></mrow><annotation encoding="application/x-tex">
+\min_{u,\delta}\ \frac{1}{2}u^\top \mathrm{diag}(r_{\text{diag}})u + f^\top u + w_{\text{clf}}\delta
+</annotation></semantics></math></p>
+<p>当</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>f</mi><mo>=</mo><mi>−</mi><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">g</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>r</mi><mtext mathvariant="normal">diag</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow><mspace width="0.167em"></mspace><msub><mi>u</mi><mtext mathvariant="normal">ref</mtext></msub></mrow><annotation encoding="application/x-tex">
+f = -\mathrm{diag}(r_{\text{diag}})\,u_{\text{ref}}
+</annotation></semantics></math></p>
+<p>时，目标等价于</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mfrac><mn>1</mn><mn>2</mn></mfrac><mo stretchy="false" form="postfix">∥</mo><mi>u</mi><mo>−</mo><msub><mi>u</mi><mtext mathvariant="normal">ref</mtext></msub><msubsup><mo stretchy="false" form="postfix">∥</mo><mi>R</mi><mn>2</mn></msubsup><mo>+</mo><msub><mi>w</mi><mtext mathvariant="normal">clf</mtext></msub><mi>δ</mi></mrow><annotation encoding="application/x-tex">
+\frac{1}{2}\|u-u_{\text{ref}}\|_R^2 + w_{\text{clf}}\delta
+</annotation></semantics></math></p>
+<p>约束：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mtext mathvariant="normal">cbf</mtext></msub><mi>u</mi><mo>≤</mo><msub><mi>b</mi><mtext mathvariant="normal">cbf</mtext></msub></mrow><annotation encoding="application/x-tex">
+A_{\text{cbf}}u \le b_{\text{cbf}}
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mtext mathvariant="normal">clf</mtext></msub><mi>u</mi><mo>≤</mo><msub><mi>b</mi><mtext mathvariant="normal">clf</mtext></msub><mo>+</mo><mi>δ</mi></mrow><annotation encoding="application/x-tex">
+A_{\text{clf}}u \le b_{\text{clf}} + \delta
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>u</mi><mo>min</mo></msub><mo>≤</mo><mi>u</mi><mo>≤</mo><msub><mi>u</mi><mo>max</mo></msub></mrow><annotation encoding="application/x-tex">
+u_{\min}\le u\le u_{\max}
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>δ</mi><mo>≥</mo><mn>0</mn></mrow><annotation encoding="application/x-tex">
+\delta \ge 0
+</annotation></semantics></math></p>
+<h3 id="cbf-形式可切换">7.3 CBF 形式（可切换）</h3>
+<p>配置键：<code>cbf_mode</code></p>
+<ol type="1">
+<li><code>distributed_ecbf</code></li>
+</ol>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>h</mi><mo>=</mo><mo stretchy="false" form="postfix">∥</mo><msub><mi>p</mi><mtext mathvariant="normal">rel</mtext></msub><msup><mo stretchy="false" form="postfix">∥</mo><mn>2</mn></msup><mo>−</mo><msubsup><mi>d</mi><mtext mathvariant="normal">safe</mtext><mn>2</mn></msubsup><mo>,</mo><mspace width="1.0em"></mspace><mover><mi>h</mi><mo accent="true">̇</mo></mover><mo>=</mo><mn>2</mn><msubsup><mi>p</mi><mtext mathvariant="normal">rel</mtext><mi>⊤</mi></msubsup><msub><mi>v</mi><mtext mathvariant="normal">rel</mtext></msub><mo>,</mo><mspace width="1.0em"></mspace><mtext mathvariant="normal">const</mtext><mo>=</mo><mn>2</mn><mo stretchy="false" form="postfix">∥</mo><msub><mi>v</mi><mtext mathvariant="normal">rel</mtext></msub><msup><mo stretchy="false" form="postfix">∥</mo><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">
+h = \|p_{\text{rel}}\|^2 - d_{\text{safe}}^2,\quad
+\dot h = 2p_{\text{rel}}^\top v_{\text{rel}},\quad
+\text{const}=2\|v_{\text{rel}}\|^2
+</annotation></semantics></math></p>
+<p>线性行：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mo>=</mo><mi>−</mi><mn>2</mn><msub><mi>p</mi><mtext mathvariant="normal">rel</mtext></msub><mo>,</mo><mspace width="1.0em"></mspace><mi>b</mi><mo>=</mo><mtext mathvariant="normal">const</mtext><mo>+</mo><msub><mi>k</mi><mn>1</mn></msub><mover><mi>h</mi><mo accent="true">̇</mo></mover><mo>+</mo><msub><mi>k</mi><mn>0</mn></msub><mi>h</mi></mrow><annotation encoding="application/x-tex">
+A=-2p_{\text{rel}},\quad b=\text{const}+k_1\dot h+k_0 h
+</annotation></semantics></math></p>
+<ol start="2" type="1">
+<li><code>distributed_gcbfplus</code></li>
+</ol>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>h</mi><mn>0</mn></msub><mo>=</mo><mo stretchy="false" form="postfix">∥</mo><msub><mi>p</mi><mtext mathvariant="normal">rel</mtext></msub><msup><mo stretchy="false" form="postfix">∥</mo><mn>2</mn></msup><mo>−</mo><msubsup><mi>d</mi><mtext mathvariant="normal">safe</mtext><mn>2</mn></msubsup><mo>,</mo><mspace width="1.0em"></mspace><msub><mover><mi>h</mi><mo accent="true">̇</mo></mover><mn>0</mn></msub><mo>=</mo><mn>2</mn><msubsup><mi>p</mi><mtext mathvariant="normal">rel</mtext><mi>⊤</mi></msubsup><msub><mi>v</mi><mtext mathvariant="normal">rel</mtext></msub></mrow><annotation encoding="application/x-tex">
+h_0=\|p_{\text{rel}}\|^2-d_{\text{safe}}^2,\quad
+\dot h_0=2p_{\text{rel}}^\top v_{\text{rel}}
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>h</mi><mn>1</mn></msub><mo>=</mo><msub><mover><mi>h</mi><mo accent="true">̇</mo></mover><mn>0</mn></msub><mo>+</mo><msub><mi>α</mi><mn>0</mn></msub><msub><mi>h</mi><mn>0</mn></msub><mo>,</mo><mspace width="0.222em"></mspace><msub><mi>α</mi><mn>0</mn></msub><mo>=</mo><msub><mi>k</mi><mn>0</mn></msub></mrow><annotation encoding="application/x-tex">
+h_1=\dot h_0+\alpha_0h_0,\ \alpha_0=k_0
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mi>f</mi></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>h</mi><mn>1</mn></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>=</mo><mn>2</mn><mo stretchy="false" form="postfix">∥</mo><msub><mi>v</mi><mtext mathvariant="normal">rel</mtext></msub><msup><mo stretchy="false" form="postfix">∥</mo><mn>2</mn></msup><mo>+</mo><mn>2</mn><msub><mi>α</mi><mn>0</mn></msub><mrow><mo stretchy="true" form="prefix">(</mo><msubsup><mi>p</mi><mtext mathvariant="normal">rel</mtext><mi>⊤</mi></msubsup><msub><mi>v</mi><mtext mathvariant="normal">rel</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
+L_f(h_1)=2\|v_{\text{rel}}\|^2 + 2\alpha_0(p_{\text{rel}}^\top v_{\text{rel}})
+</annotation></semantics></math></p>
+<p>责任分配约束：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mo>=</mo><mi>−</mi><mn>2</mn><msub><mi>p</mi><mtext mathvariant="normal">rel</mtext></msub><mo>,</mo><mspace width="1.0em"></mspace><mi>b</mi><mo>=</mo><mtext mathvariant="normal">share</mtext><mspace width="0.167em"></mspace><mo minsize="1.2" maxsize="1.2" stretchy="false" form="prefix">(</mo><msub><mi>L</mi><mi>f</mi></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>h</mi><mn>1</mn></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>+</mo><msub><mi>α</mi><mn>1</mn></msub><msub><mi>h</mi><mn>1</mn></msub><mo minsize="1.2" maxsize="1.2" stretchy="false" form="postfix">)</mo><mo>,</mo><mspace width="0.222em"></mspace><msub><mi>α</mi><mn>1</mn></msub><mo>=</mo><msub><mi>k</mi><mn>1</mn></msub></mrow><annotation encoding="application/x-tex">
+A=-2p_{\text{rel}},\quad
+b=\text{share}\,\big(L_f(h_1)+\alpha_1 h_1\big),\ \alpha_1=k_1
+</annotation></semantics></math></p>
+<ol start="3" type="1">
+<li><code>distributed_hocbf54</code></li>
+</ol>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>h</mi><mo>=</mo><msqrt><mrow><mn>4</mn><msub><mi>u</mi><mo>max</mo></msub><mrow><mo stretchy="true" form="prefix">(</mo><mo stretchy="false" form="postfix">∥</mo><msub><mi>p</mi><mtext mathvariant="normal">rel</mtext></msub><mo stretchy="false" form="postfix">∥</mo><mo>−</mo><msub><mi>d</mi><mtext mathvariant="normal">safe</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow></msqrt><mo>+</mo><msup><mi>n</mi><mi>⊤</mi></msup><msub><mi>v</mi><mtext mathvariant="normal">rel</mtext></msub><mo>,</mo><mspace width="1.0em"></mspace><mi>n</mi><mo>=</mo><mfrac><msub><mi>p</mi><mtext mathvariant="normal">rel</mtext></msub><mrow><mo stretchy="false" form="postfix">∥</mo><msub><mi>p</mi><mtext mathvariant="normal">rel</mtext></msub><mo stretchy="false" form="postfix">∥</mo></mrow></mfrac></mrow><annotation encoding="application/x-tex">
+h = \sqrt{4u_{\max}(\|p_{\text{rel}}\|-d_{\text{safe}})} + n^\top v_{\text{rel}},
+\quad
+n=\frac{p_{\text{rel}}}{\|p_{\text{rel}}\|}
+</annotation></semantics></math></p>
+<p>对应线性行
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>A</mi><mi>u</mi><mo>≤</mo><mi>b</mi></mrow><annotation encoding="application/x-tex">Au\le b</annotation></semantics></math>
+由 <code>_build_hocbf54_row</code> /
+<code>_build_hocbf54_row_torch</code> 实现。</p>
+<h3 id="clf-形式">7.4 CLF 形式</h3>
+<p>期望速度：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>v</mi><mtext mathvariant="normal">des</mtext></msub><mo>=</mo><mrow><mo stretchy="true" form="prefix">{</mo><mtable><mtr><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">clf_v_des_vector</mtext><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">技能提供该向量</mtext></mtd></mtr><mtr><mtd columnalign="left" style="text-align: left"><msub><mi>s</mi><mtext mathvariant="normal">ref</mtext></msub><mo>⋅</mo><mtext mathvariant="normal">goal_dir</mtext><mo>,</mo></mtd><mtd columnalign="left" style="text-align: left"><mtext mathvariant="normal">否则</mtext></mtd></mtr></mtable></mrow></mrow><annotation encoding="application/x-tex">
+v_{\text{des}}=
+\begin{cases}
+\text{clf\_v\_des\_vector}, &amp; \text{技能提供该向量}\\
+s_{\text{ref}}\cdot \text{goal\_dir}, &amp; \text{否则}
+\end{cases}
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>V</mi><mo>=</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><mo stretchy="false" form="postfix">∥</mo><mi>v</mi><mo>−</mo><msub><mi>v</mi><mtext mathvariant="normal">des</mtext></msub><msup><mo stretchy="false" form="postfix">∥</mo><mn>2</mn></msup><mo>,</mo><mspace width="1.0em"></mspace><msub><mi>A</mi><mtext mathvariant="normal">clf</mtext></msub><mo>=</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><mi>v</mi><mo>−</mo><msub><mi>v</mi><mtext mathvariant="normal">des</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow><mi>⊤</mi></msup><mo>,</mo><mspace width="1.0em"></mspace><msub><mi>b</mi><mtext mathvariant="normal">clf</mtext></msub><mo>=</mo><mi>−</mi><msub><mi>k</mi><mtext mathvariant="normal">clf</mtext></msub><mi>V</mi></mrow><annotation encoding="application/x-tex">
+V=\frac{1}{2}\|v-v_{\text{des}}\|^2,\quad
+A_{\text{clf}}=(v-v_{\text{des}})^\top,\quad
+b_{\text{clf}}=-k_{\text{clf}}V
+</annotation></semantics></math></p>
+<p>CLF 在 QP 中通过松弛变量
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>δ</mi><annotation encoding="application/x-tex">\delta</annotation></semantics></math>
+软化。</p>
+<h3 id="求解器策略">7.5 求解器策略</h3>
+<p>推理 QP（<code>qp_solver.py</code>）： - 先 ECOS - 失败则 SCS -
+再失败用 deterministic stub（按目标项闭式 + 限幅）</p>
+<p>可微 QP（<code>diff_qp.py</code>）用于训练反传： - 同样 ECOS -&gt;
+SCS -&gt; 张量 fallback - 保留
+<code>r_diag / w_clf / cbf_k* / clf_k / u_ref</code> 的梯度路径</p>
+<h2 id="下层训练模式可切换">8. 下层训练模式（可切换）</h2>
+<p>配置键：<code>train.low_update_mode</code></p>
+<h3 id="target_regression">8.1 <code>target_regression</code></h3>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mtext mathvariant="normal">low</mtext></msub><mo>=</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><mo stretchy="false" form="postfix">∥</mo><msub><mi>u</mi><mtext mathvariant="normal">qp</mtext></msub><mo>−</mo><msub><mi>u</mi><mtext mathvariant="normal">target</mtext></msub><msup><mo stretchy="false" form="postfix">∥</mo><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">
+L_{\text{low}}=\frac{1}{2}\|u_{\text{qp}}-u_{\text{target}}\|^2
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>u</mi><mtext mathvariant="normal">target</mtext></msub><mo>=</mo><msub><mi>u</mi><mtext mathvariant="normal">exec</mtext></msub><mo>+</mo><mtext mathvariant="normal">scale</mtext><mo>⋅</mo><mtext mathvariant="normal">advantage</mtext><mo>⋅</mo><mtext mathvariant="normal">goal_dir</mtext></mrow><annotation encoding="application/x-tex">
+u_{\text{target}} = u_{\text{exec}} + \text{scale}\cdot\text{advantage}\cdot\text{goal\_dir}
+</annotation></semantics></math></p>
+<p>并可裁剪到输入边界。</p>
+<h3 id="onpolicy_ppo">8.2 <code>onpolicy_ppo</code></h3>
+<p>rollout 时： - 先计算 QP 均值动作
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>μ</mi><annotation encoding="application/x-tex">\mu</annotation></semantics></math>
+-
+采样动作：<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>a</mi><mtext mathvariant="normal">sample</mtext></msub><mo>=</mo><mi>μ</mi><mo>+</mo><mi>ϵ</mi><mo>,</mo><mspace width="0.222em"></mspace><mi>ϵ</mi><mo>∼</mo><mi>𝒩</mi><mrow><mo stretchy="true" form="prefix">(</mo><mn>0</mn><mo>,</mo><msup><mi>σ</mi><mn>2</mn></msup><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">a_{\text{sample}}=\mu+\epsilon,\ \epsilon\sim\mathcal{N}(0,\sigma^2)</annotation></semantics></math>
+- 记录 <code>logp_old</code> 与 <code>value_old</code></p>
+<p>更新时：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>r</mi><mo>=</mo><mo>exp</mo><mrow><mo stretchy="true" form="prefix">(</mo><mo>log</mo><msub><mi>p</mi><mtext mathvariant="normal">new</mtext></msub><mo>−</mo><mo>log</mo><msub><mi>p</mi><mtext mathvariant="normal">old</mtext></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
+r=\exp(\log p_{\text{new}}-\log p_{\text{old}})
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mtext mathvariant="normal">actor</mtext></msub><mo>=</mo><mi>−</mi><mo>min</mo><mspace width="-0.167em"></mspace><mrow><mo stretchy="true" form="prefix">(</mo><mi>r</mi><mi>A</mi><mo>,</mo><mspace width="0.222em"></mspace><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">i</mi><mi mathvariant="normal">p</mi></mrow><mrow><mo stretchy="true" form="prefix">(</mo><mi>r</mi><mo>,</mo><mn>1</mn><mo>−</mo><mi>ϵ</mi><mo>,</mo><mn>1</mn><mo>+</mo><mi>ϵ</mi><mo stretchy="true" form="postfix">)</mo></mrow><mi>A</mi><mo stretchy="true" form="postfix">)</mo></mrow></mrow><annotation encoding="application/x-tex">
+L_{\text{actor}}=-\min\!\left(rA,\ \mathrm{clip}(r,1-\epsilon,1+\epsilon)A\right)
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mtext mathvariant="normal">value</mtext></msub><mo>=</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><msup><mrow><mo stretchy="true" form="prefix">(</mo><mi>V</mi><mo>−</mo><mi>R</mi><mo stretchy="true" form="postfix">)</mo></mrow><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">
+L_{\text{value}}=\frac{1}{2}(V-R)^2
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>L</mi><mtext mathvariant="normal">low</mtext></msub><mo>=</mo><msub><mi>L</mi><mtext mathvariant="normal">actor</mtext></msub><mo>+</mo><msub><mi>c</mi><mi>v</mi></msub><msub><mi>L</mi><mtext mathvariant="normal">value</mtext></msub><mo>−</mo><msub><mi>c</mi><mtext mathvariant="normal">ent</mtext></msub><mi>H</mi></mrow><annotation encoding="application/x-tex">
+L_{\text{low}}=L_{\text{actor}}+c_vL_{\text{value}}-c_{\text{ent}}H
+</annotation></semantics></math></p>
+<p>默认低层回报以内在奖励为主（<code>low_ext_reward_coef=0.0</code>）：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">low_return</mtext><mo>=</mo><msub><mi>r</mi><mtext mathvariant="normal">int</mtext></msub><mo>+</mo><mtext mathvariant="normal">coef</mtext><mo>⋅</mo><msub><mi>r</mi><mtext mathvariant="normal">ext</mtext></msub></mrow><annotation encoding="application/x-tex">
+\text{low\_return}=r_{\text{int}}+\text{coef}\cdot r_{\text{ext}}
+</annotation></semantics></math></p>
+<h2 id="奖励成本与指标">9. 奖励、成本与指标</h2>
+<h3 id="环境外在奖励-reward_ext">9.1 环境外在奖励
+<code>reward_ext</code></h3>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mtext mathvariant="normal">progress</mtext><mo>=</mo><msub><mi>d</mi><mtext mathvariant="normal">prev</mtext></msub><mo>−</mo><msub><mi>d</mi><mtext mathvariant="normal">curr</mtext></msub></mrow><annotation encoding="application/x-tex">
+\text{progress}=d_{\text{prev}}-d_{\text{curr}}
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>r</mi><mo>=</mo><msub><mi>w</mi><mtext mathvariant="normal">progress</mtext></msub><mo>⋅</mo><mtext mathvariant="normal">progress</mtext><mo>−</mo><msub><mi>w</mi><mtext mathvariant="normal">time</mtext></msub></mrow><annotation encoding="application/x-tex">
+r=w_{\text{progress}}\cdot\text{progress}-w_{\text{time}}
+</annotation></semantics></math></p>
+<p>到达加 <code>reach_bonus</code>，碰撞减
+<code>collision_penalty</code>，出界减 <code>oob_penalty</code>。</p>
+<h3 id="内在奖励-reward_int">9.2 内在奖励 <code>reward_int</code></h3>
+<p>在 <code>skills/library.py</code> 中定义，共性项包括： - 加速度惩罚 -
+转向惩罚 - 速度偏差惩罚 - 航向偏差惩罚 - 小权重前进奖励</p>
+<p>各技能再附加对应 bonus/penalty（如 <code>hover</code>
+的静止与贴近目标奖励）。</p>
+<h3 id="安全成本">9.3 安全成本</h3>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>c</mi><mi>i</mi></msub><mo>=</mo><mn>𝟏</mn><mo stretchy="false" form="prefix">{</mo><mtext mathvariant="normal">collision or out-of-bounds</mtext><mo stretchy="false" form="postfix">}</mo></mrow><annotation encoding="application/x-tex">
+c_i=\mathbf{1}\{\text{collision or out-of-bounds}\}
+</annotation></semantics></math></p>
+<p>在 <code>env.info["costs"]</code> 输出。</p>
+<h3 id="常用日志">9.4 常用日志</h3>
+<ul>
+<li><code>episode_return_mean</code>（外在回报均值）</li>
+<li><code>safe_reach_ratio</code></li>
+<li><code>eval_success_rate</code>, <code>eval_collision_rate</code>,
+<code>eval_reach_rate</code></li>
+<li><code>eval_qp_feasible_rate</code></li>
+<li><code>loss_high_*</code>, <code>loss_low_*</code></li>
+</ul>
+<h2 id="默认配置default_async_onpolicy_gcbfplus.yaml">10.
+默认配置（<code>default_async_onpolicy_gcbfplus.yaml</code>）</h2>
+<p>关键默认值： - 环境：<code>n_agents=4</code>,
+<code>n_obstacles=3</code>, <code>dt=0.1</code>,
+<code>horizon=200</code> - 限幅：<code>action_limit=2.0</code>,
+<code>velocity_limit=2.0</code> - 感知：<code>lidar_beams=32</code>,
+<code>lidar_range=4.5</code>, <code>neighbor_radius=3.0</code> -
+协议：<code>mode=async</code>, <code>t_sync_max=20</code> -
+安全：<code>d_min_agent=0.6</code>, <code>d_safe_obs=0.6</code> -
+技能：<code>ref_speed=1.2</code>,
+<code>decelerate_target_speed=0.3</code> -
+CBF：<code>cbf_mode=distributed_gcbfplus</code>,
+<code>cbf_share_agent=0.5</code>, <code>cbf_share_obs=1.0</code> -
+约束：<code>use_input_bounds=true</code> -
+训练：<code>rollout_steps=200</code>, <code>eval_interval=10</code> -
+折扣：<code>gamma_high=0.99</code>, <code>lam_high=0.95</code>,
+<code>gamma_low=0.99</code> -
+下层：<code>low_update_mode=target_regression</code>（可切到
+<code>onpolicy_ppo</code>）</p>
+<h2 id="训练与评测入口">11. 训练与评测入口</h2>
+<h3 id="训练">11.1 训练</h3>
+<p>入口：<code>python -m hmarl_cbf.train.run_sync_onpolicy</code></p>
+<p>示例（异步 + GCBF + 下层 PPO）：</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> hmarl_cbf.train.run_sync_onpolicy <span class="dt">\</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config</span> configs/hmarl_cbf/default_async_onpolicy_gcbfplus.yaml <span class="dt">\</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--low-update-mode</span> onpolicy_ppo <span class="dt">\</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--run-name</span> train_async_lowppo_gcbfplus</span></code></pre></div>
+<h3 id="评测">11.2 评测</h3>
+<p>入口：<code>python -m hmarl_cbf.train.eval_checkpoint_random</code></p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> hmarl_cbf.train.eval_checkpoint_random <span class="dt">\</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--checkpoint</span> artifacts/hmarl_cbf/<span class="op">&lt;</span>run<span class="op">&gt;</span>/checkpoints/last.pt <span class="dt">\</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--episodes</span> 100 <span class="dt">\</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--seconds</span> 30 <span class="dt">\</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--deterministic</span> <span class="dt">\</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--run-name</span> eval_100x30s</span></code></pre></div>
+<p>输出： - <code>episode_results.csv</code> -
+<code>summary.json</code></p>
+<h2 id="实现注意事项">12. 实现注意事项</h2>
+<ol type="1">
+<li>世界单位是仿真单位（数值尺度），默认不显式绑定真实米制。</li>
+<li>邻居/障碍 CBF 采用“感知到才加约束”：
+<ul>
+<li>邻居由 <code>neighbor_radius</code> 过滤。</li>
+<li>障碍由 <code>lidar_range</code>（表面距离）过滤。</li>
+</ul></li>
+<li>当前版本 QP 不可解时不会强制“减速 fallback”；推理求解器走内部
+fallback。</li>
+<li>上层回报用外在奖励聚合；下层回报默认以内在奖励为主（<code>low_ext_reward_coef=0.0</code>）。</li>
+</ol>
+<h2 id="一句话总结">13. 一句话总结</h2>
+<p>当前实现是可切换 sync/async 的分层多智能体安全控制框架：上层 MAPPO
+学技能切换，下层网络学习 QP 参数并通过 CBF/CLF-QP 逐步生成安全动作，支持
+GCBF+ 风格分布式手工 CBF 与下层 on-policy PPO 路径。</p>
+</body>
+</html>

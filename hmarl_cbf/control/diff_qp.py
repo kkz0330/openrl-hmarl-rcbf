@@ -21,6 +21,9 @@ except ImportError:  # pragma: no cover - optional backend
 
 from hmarl_cbf.types import AgentState, QPParam
 
+R_DIAG_MIN = 1e-2
+R_DIAG_MAX = 50.0
+
 
 @dataclass(slots=True)
 class DiffConstraintConstants:
@@ -160,6 +163,7 @@ class TorchDifferentiableQPSolver:
 
         layer = self._get_layer(m_cbf=m_cbf, m_clf=m_clf, n_u=n_u)
         r_diag = torch.as_tensor(qp_param.r_diag, device=device, dtype=dtype).reshape(n_u)
+        r_diag = torch.clamp(r_diag, min=R_DIAG_MIN, max=R_DIAG_MAX)
         if qp_param.f_lin is not None:
             f_lin = torch.as_tensor(qp_param.f_lin, device=device, dtype=dtype).reshape(n_u)
         else:
@@ -202,7 +206,7 @@ class TorchDifferentiableQPSolver:
                     },
                 )
             except Exception:
-                action = -f_lin / torch.clamp(r_diag, min=1e-5)
+                action = -f_lin / torch.clamp(r_diag, min=R_DIAG_MIN, max=R_DIAG_MAX)
                 action = torch.maximum(torch.minimum(action, constants.u_max.reshape(n_u)), constants.u_min.reshape(n_u))
                 slack = torch.zeros((1,), dtype=dtype, device=device)
         return DiffQPSolveResult(

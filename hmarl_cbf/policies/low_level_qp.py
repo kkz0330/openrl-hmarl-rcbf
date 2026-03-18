@@ -23,6 +23,8 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         n_skills: int,
         action_dim: int = 2,
         hidden_dim: int = 128,
+        r_diag_min: float = 1e-2,
+        r_diag_max: float = 50.0,
     ) -> None:
         if torch is None:
             raise RuntimeError("PyTorch is required to instantiate LowLevelQPPolicy")
@@ -30,6 +32,12 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         self.obs_dim = obs_dim
         self.n_skills = n_skills
         self.action_dim = action_dim
+        self.r_diag_min = float(r_diag_min)
+        self.r_diag_max = float(r_diag_max)
+        if self.r_diag_min <= 0.0:
+            raise ValueError("r_diag_min must be > 0 for strict positive definiteness")
+        if self.r_diag_max < self.r_diag_min:
+            raise ValueError("r_diag_max must be >= r_diag_min")
 
         self.skill_embedding = nn.Embedding(n_skills, hidden_dim)
         self.obs_encoder = nn.Sequential(
@@ -59,7 +67,11 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         fused = self._encode(obs_low, skill_id)
 
         u_ref = self.u_ref_head(fused)
-        r_diag = F.softplus(self.r_diag_head(fused)) + 1e-4
+        r_diag = torch.clamp(
+            F.softplus(self.r_diag_head(fused)) + self.r_diag_min,
+            min=self.r_diag_min,
+            max=self.r_diag_max,
+        )
         w_clf = F.softplus(self.w_clf_head(fused)) + 1e-4
         cbf_k0 = F.softplus(self.cbf_k0_head(fused)) + 1e-4
         cbf_k1 = F.softplus(self.cbf_k1_head(fused)) + 1e-4
