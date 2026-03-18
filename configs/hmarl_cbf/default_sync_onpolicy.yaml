@@ -47,7 +47,7 @@ skills:
     turn_track_kp: 1.0
     target_speed: 1.2
     decelerate_target_speed: 0.3
-    ref_speed: 0.8
+    ref_speed: 1.2
     d_min_agent: 0.6
     d_safe_obs: 0.6
     cbf_mode: distributed_ecbf
