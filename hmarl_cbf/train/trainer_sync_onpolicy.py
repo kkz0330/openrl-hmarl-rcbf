@@ -36,6 +36,15 @@ class TrainerHooks:
     low_update_epochs: int = 1
     low_max_samples_per_iter: int = 256
     low_target_step_scale: float = 0.05
+    low_update_mode: str = "target_regression"
+    low_ppo_epochs: int = 2
+    low_ppo_clip_ratio: float = 0.2
+    low_ppo_value_coef: float = 0.5
+    low_ppo_entropy_coef: float = 0.0
+    low_ppo_max_grad_norm: float = 0.5
+    low_policy_action_std: float = 0.20
+    low_normalize_advantages: bool = True
+    low_detach_value_head_in_actor: bool = True
     eval_episodes: int = 3
     eval_deterministic: bool = True
     eval_render: bool = False
@@ -227,6 +236,238 @@ class TrainerSyncOnPolicy:
             obstacles=obstacles,
         )
 
+    def _is_low_update_ppo(self) -> bool:
+        return str(self.hooks.low_update_mode).strip().lower() in {"onpolicy_ppo", "low_ppo"}
+
+    def _extract_local_context_from_info(
+        self,
+        tr: LowStepTransition,
+    ) -> tuple[AgentState, List[AgentState], List[Dict[str, Any]], Dict[str, Any], np.ndarray]:
+        info = dict(tr.info or {})
+        pos = np.asarray(tr.obs_low.self_state[:2], dtype=np.float32)
+        vel = np.asarray(tr.obs_low.self_state[2:4], dtype=np.float32)
+        goal = pos + np.asarray(tr.obs_low.goal_relative, dtype=np.float32)
+        state = AgentState(agent_id=tr.agent_id, position=pos, velocity=vel, goal=goal)
+
+        neighbors: List[AgentState] = []
+        for item in list(info.get("perceived_neighbors", [])):
+            if isinstance(item, AgentState):
+                neighbors.append(
+                    AgentState(
+                        agent_id=int(item.agent_id),
+                        position=np.asarray(item.position, dtype=np.float32).reshape(2),
+                        velocity=np.asarray(item.velocity, dtype=np.float32).reshape(2),
+                        goal=np.asarray(item.goal, dtype=np.float32).reshape(2),
+                        radius=float(item.radius),
+                    )
+                )
+            else:
+                d = dict(item)
+                neighbors.append(
+                    AgentState(
+                        agent_id=int(d.get("agent_id", -1)),
+                        position=np.asarray(d["position"], dtype=np.float32).reshape(2),
+                        velocity=np.asarray(d["velocity"], dtype=np.float32).reshape(2),
+                        goal=np.asarray(d["goal"], dtype=np.float32).reshape(2),
+                        radius=float(d.get("radius", 0.2)),
+                    )
+                )
+
+        obstacles: List[Dict[str, Any]] = []
+        for item in list(info.get("perceived_obstacles", [])):
+            d = dict(item)
+            obstacles.append(
+                {
+                    "center": np.asarray(d["center"], dtype=np.float32).reshape(2),
+                    "radius": float(d["radius"]),
+                }
+            )
+
+        safety_constraints = dict(info.get("safety_constraints", {}))
+        skill_u_ref = np.asarray(info.get("skill_u_ref", np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
+        return state, neighbors, obstacles, safety_constraints, skill_u_ref
+
+    def _build_diff_constants(
+        self,
+        state_i: AgentState,
+        neighbors: List[AgentState],
+        obstacles: List[Dict[str, Any]],
+        safety_constraints: Dict[str, Any],
+    ) -> tuple[Any, np.ndarray, np.ndarray]:
+        overrides = dict(safety_constraints or {})
+        use_input_bounds = bool(overrides.get("use_input_bounds", True))
+        if use_input_bounds:
+            u_min = np.asarray(overrides.get("u_min", self.constraint_builder.u_min), dtype=np.float32).reshape(2)
+            u_max = np.asarray(overrides.get("u_max", self.constraint_builder.u_max), dtype=np.float32).reshape(2)
+        else:
+            unbounded = float(overrides.get("unbounded_action_limit", 1.0e6))
+            u_min = np.asarray([-unbounded, -unbounded], dtype=np.float32)
+            u_max = np.asarray([unbounded, unbounded], dtype=np.float32)
+
+        constants = build_diff_constraint_constants(
+            state_i=state_i,
+            neighbors=neighbors,
+            obstacles=obstacles,
+            d_min_agent=float(overrides.get("d_min_agent", self.constraint_builder.d_min_agent)),
+            d_safe_obs=float(overrides.get("d_safe_obs", self.constraint_builder.d_safe_obs)),
+            cbf_mode=str(overrides.get("cbf_mode", "distributed_ecbf")),
+            cbf_u_max=float(overrides.get("cbf_u_max", max(np.max(np.abs(u_min)), np.max(np.abs(u_max)), 1e-3))),
+            cbf_share_agent=float(overrides.get("cbf_share_agent", 0.5)),
+            cbf_share_obs=float(overrides.get("cbf_share_obs", 1.0)),
+            cbf_eps=float(overrides.get("cbf_eps", 1e-4)),
+            u_min=u_min,
+            u_max=u_max,
+        )
+        return constants, u_min, u_max
+
+    @staticmethod
+    def _flatten_qp_param_torch(qp_param_raw: QPParam) -> QPParam:
+        return QPParam(
+            u_ref=qp_param_raw.u_ref.reshape(-1),
+            r_diag=qp_param_raw.r_diag.reshape(-1),
+            w_clf=qp_param_raw.w_clf.reshape(-1),
+            cbf_k0=qp_param_raw.cbf_k0.reshape(-1),
+            cbf_k1=qp_param_raw.cbf_k1.reshape(-1),
+            clf_k=qp_param_raw.clf_k.reshape(-1),
+            f_lin=None,
+            hocbf_gamma_h=(
+                qp_param_raw.hocbf_gamma_h.reshape(-1)
+                if getattr(qp_param_raw, "hocbf_gamma_h", None) is not None
+                else None
+            ),
+            hocbf_gamma_hdot=(
+                qp_param_raw.hocbf_gamma_hdot.reshape(-1)
+                if getattr(qp_param_raw, "hocbf_gamma_hdot", None) is not None
+                else None
+            ),
+        )
+
+    @staticmethod
+    def _flatten_qp_param_numpy(qp_param_raw: QPParam) -> QPParam:
+        return QPParam(
+            u_ref=np.asarray(qp_param_raw.u_ref.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
+            r_diag=np.asarray(qp_param_raw.r_diag.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
+            w_clf=np.asarray(qp_param_raw.w_clf.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
+            cbf_k0=np.asarray(qp_param_raw.cbf_k0.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
+            cbf_k1=np.asarray(qp_param_raw.cbf_k1.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
+            clf_k=np.asarray(qp_param_raw.clf_k.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
+            f_lin=None,
+            hocbf_gamma_h=(
+                np.asarray(qp_param_raw.hocbf_gamma_h.detach().cpu().numpy(), dtype=np.float32).reshape(-1)
+                if getattr(qp_param_raw, "hocbf_gamma_h", None) is not None
+                else None
+            ),
+            hocbf_gamma_hdot=(
+                np.asarray(qp_param_raw.hocbf_gamma_hdot.detach().cpu().numpy(), dtype=np.float32).reshape(-1)
+                if getattr(qp_param_raw, "hocbf_gamma_hdot", None) is not None
+                else None
+            ),
+        )
+
+    def _compute_safe_actions_for_low_ppo(
+        self,
+        states: Dict[int, AgentState],
+        obs_low: Dict[int, AgentObsLow],
+        obstacles: List[Dict[str, Any]],
+        runtime_ctx: Dict[str, Any] | None = None,
+    ) -> tuple[Dict[int, Any], Dict[int, Any], Dict[int, Dict[str, Any]]]:
+        if torch is None:
+            raise RuntimeError("PyTorch is required for on-policy low-level updates")
+        if self.diff_qp_solver is None:
+            raise RuntimeError("differentiable QP solver is not set")
+        if self.skill_runtime is None:
+            raise RuntimeError("skill runtime manager is not set")
+        if self.low_level_controller is None:
+            raise RuntimeError("low level controller is not set")
+        if self.low_policy is None or not hasattr(self.low_policy, "forward"):
+            raise RuntimeError("low_policy must be a torch module for on-policy low-level updates")
+
+        skill_targets = self.skill_runtime.control_targets(states=states, obs_low=obs_low, runtime_ctx=runtime_ctx)
+        agent_ids = sorted(states.keys())
+        std = max(1e-3, float(self.hooks.low_policy_action_std))
+
+        actions: Dict[int, Any] = {}
+        outputs: Dict[int, Any] = {}
+        per_step_stats: Dict[int, Dict[str, Any]] = {}
+
+        for aid in agent_ids:
+            state_i = states[aid]
+            target = dict(skill_targets[aid])
+            skill_id = int(target["skill_id"])
+            skill_u_ref = np.asarray(target["u_ref_skill"], dtype=np.float32).reshape(2)
+            safety_constraints = dict(target.get("safety_constraints", {}))
+            neighbors_all = [state_j for other_id, state_j in states.items() if other_id != aid]
+            neighbors = self.low_level_controller._filter_neighbors(state_i=state_i, neighbors=neighbors_all)
+            obstacles_local = self.low_level_controller._filter_obstacles(
+                state_i=state_i,
+                obstacles=obstacles,
+                obs_low=obs_low[aid],
+            )
+            constants, _, _ = self._build_diff_constants(
+                state_i=state_i,
+                neighbors=neighbors,
+                obstacles=obstacles_local,
+                safety_constraints=safety_constraints,
+            )
+
+            obs_tensor = torch.as_tensor(obs_low[aid].flat, dtype=torch.float32).unsqueeze(0)
+            skill_tensor = torch.as_tensor([skill_id], dtype=torch.long)
+            with torch.no_grad():
+                qp_param_raw = self.low_policy(obs_tensor, skill_tensor)
+                qp_param = self._flatten_qp_param_torch(qp_param_raw)
+                policy_u_ref = qp_param.u_ref.reshape(2)
+                fused_mean_u_ref = self.low_level_controller._fuse_u_ref(
+                    policy_u_ref=np.asarray(policy_u_ref.detach().cpu().numpy(), dtype=np.float32).reshape(2),
+                    skill_u_ref=skill_u_ref,
+                )
+                qp_param_mean = QPParam(
+                    u_ref=torch.as_tensor(fused_mean_u_ref, dtype=torch.float32),
+                    r_diag=qp_param.r_diag,
+                    w_clf=qp_param.w_clf,
+                    cbf_k0=qp_param.cbf_k0,
+                    cbf_k1=qp_param.cbf_k1,
+                    clf_k=qp_param.clf_k,
+                    f_lin=None,
+                    hocbf_gamma_h=qp_param.hocbf_gamma_h,
+                    hocbf_gamma_hdot=qp_param.hocbf_gamma_hdot,
+                )
+                mean_out = self.diff_qp_solver.solve(qp_param_mean, constants)
+                mean_action = mean_out.action.reshape(2)
+                noise = torch.randn_like(mean_action) * std
+                sampled_proxy = mean_action + noise
+                dist = torch.distributions.Normal(mean_action, torch.full_like(mean_action, std))
+                logp = torch.sum(dist.log_prob(sampled_proxy))
+                value = (
+                    self.low_policy.low_value(obs_tensor, skill_tensor).reshape(1)
+                    if hasattr(self.low_policy, "low_value")
+                    else torch.zeros((1,), dtype=torch.float32)
+                )
+                qp_param_np = self._flatten_qp_param_numpy(qp_param_raw)
+                sampled_proxy_np = np.asarray(sampled_proxy.detach().cpu().numpy(), dtype=np.float32).reshape(2)
+                out = self.low_level_controller.solve_for_agent(
+                    agent_id=aid,
+                    state_i=state_i,
+                    neighbors=neighbors,
+                    obstacles=obstacles_local,
+                    obs_low=obs_low[aid],
+                    skill_id=skill_id,
+                    skill_u_ref=skill_u_ref,
+                    safety_constraints=safety_constraints,
+                    qp_param_override=qp_param_np,
+                    fused_u_ref_override=sampled_proxy_np,
+                )
+                actions[aid] = np.asarray(out.solution.action, dtype=np.float32).reshape(2)
+                outputs[aid] = out
+                per_step_stats[aid] = {
+                    "low_logp": float(logp.detach().cpu().item()),
+                    "low_value": float(value[0].detach().cpu().item()),
+                    "low_policy_action_sample": sampled_proxy_np.copy(),
+                    "low_policy_action_mean": np.asarray(mean_action.detach().cpu().numpy(), dtype=np.float32).reshape(2).copy(),
+                    "skill_u_ref": skill_u_ref.copy(),
+                    "low_policy_action_std": float(std),
+                }
+        return actions, outputs, per_step_stats
+
     def backward_low_level_diff_step(
         self,
         state_i: AgentState,
@@ -406,11 +647,19 @@ class TrainerSyncOnPolicy:
         for _ in range(self.hooks.rollout_steps):
             states = {s.agent_id: s for s in self.env.get_agent_states()}
             obs_low = {aid: obs[aid]["low"] for aid in agent_ids}
-            actions, control_outputs = self.compute_safe_actions(
-                states=states,
-                obs_low=obs_low,
-                obstacles=self.env.get_obstacles(),
-            )
+            low_step_stats: Dict[int, Dict[str, Any]] = {}
+            if self._is_low_update_ppo():
+                actions, control_outputs, low_step_stats = self._compute_safe_actions_for_low_ppo(
+                    states=states,
+                    obs_low=obs_low,
+                    obstacles=self.env.get_obstacles(),
+                )
+            else:
+                actions, control_outputs = self.compute_safe_actions(
+                    states=states,
+                    obs_low=obs_low,
+                    obstacles=self.env.get_obstacles(),
+                )
             next_obs, rewards, terminated, truncated, info = self.env.step(actions)
             next_states = {s.agent_id: s for s in self.env.get_agent_states()}
             next_obs_low = {aid: next_obs[aid]["low"] for aid in agent_ids}
@@ -443,6 +692,8 @@ class TrainerSyncOnPolicy:
                         reward_int=float(skill_out[aid].intrinsic_reward),
                         reward_ext=float(rewards[aid]),
                         done=done,
+                        logp=float(low_step_stats.get(aid, {}).get("low_logp")) if aid in low_step_stats else None,
+                        value=float(low_step_stats.get(aid, {}).get("low_value")) if aid in low_step_stats else None,
                         sync_switch=bool(aid in switched_agents),
                         terminated_by_skill=bool(skill_out[aid].beta),
                         info={
@@ -466,6 +717,20 @@ class TrainerSyncOnPolicy:
                                 }
                                 for o in control_outputs[aid].obstacles_used
                             ],
+                            "skill_u_ref": np.asarray(skill_out[aid].u_ref_skill, dtype=np.float32).reshape(2).copy(),
+                            "low_policy_action_sample": (
+                                np.asarray(low_step_stats[aid]["low_policy_action_sample"], dtype=np.float32).reshape(2).copy()
+                                if aid in low_step_stats
+                                else np.asarray(actions[aid], dtype=np.float32).reshape(2).copy()
+                            ),
+                            "low_policy_action_mean": (
+                                np.asarray(low_step_stats[aid]["low_policy_action_mean"], dtype=np.float32).reshape(2).copy()
+                                if aid in low_step_stats
+                                else np.asarray(actions[aid], dtype=np.float32).reshape(2).copy()
+                            ),
+                            "low_policy_action_std": float(
+                                low_step_stats.get(aid, {}).get("low_policy_action_std", self.hooks.low_policy_action_std)
+                            ),
                         },
                     )
                 )
@@ -553,6 +818,11 @@ class TrainerSyncOnPolicy:
         }
 
     def update_low_level(self) -> Dict[str, float]:
+        if self._is_low_update_ppo():
+            return self._update_low_level_onpolicy_ppo()
+        return self._update_low_level_target_regression()
+
+    def _update_low_level_target_regression(self) -> Dict[str, float]:
         if self.diff_qp_solver is None or self.low_level_optimizer is None:
             return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
         if self.low_policy is None or not hasattr(self.low_policy, "forward"):
@@ -567,57 +837,24 @@ class TrainerSyncOnPolicy:
         n_updates = 0
         for _ in range(max(1, self.hooks.low_update_epochs)):
             for tr in selected:
-                info = dict(tr.info or {})
-                pos = np.asarray(tr.obs_low.self_state[:2], dtype=np.float32)
-                vel = np.asarray(tr.obs_low.self_state[2:4], dtype=np.float32)
-                goal = pos + np.asarray(tr.obs_low.goal_relative, dtype=np.float32)
-                state = AgentState(agent_id=tr.agent_id, position=pos, velocity=vel, goal=goal)
+                state, neighbors, obstacles, safety_constraints, _ = self._extract_local_context_from_info(tr)
 
-                neighbors: List[AgentState] = []
-                for item in list(info.get("perceived_neighbors", [])):
-                    if isinstance(item, AgentState):
-                        neighbors.append(
-                            AgentState(
-                                agent_id=int(item.agent_id),
-                                position=np.asarray(item.position, dtype=np.float32).reshape(2),
-                                velocity=np.asarray(item.velocity, dtype=np.float32).reshape(2),
-                                goal=np.asarray(item.goal, dtype=np.float32).reshape(2),
-                                radius=float(item.radius),
-                            )
-                        )
-                    else:
-                        d = dict(item)
-                        neighbors.append(
-                            AgentState(
-                                agent_id=int(d.get("agent_id", -1)),
-                                position=np.asarray(d["position"], dtype=np.float32).reshape(2),
-                                velocity=np.asarray(d["velocity"], dtype=np.float32).reshape(2),
-                                goal=np.asarray(d["goal"], dtype=np.float32).reshape(2),
-                                radius=float(d.get("radius", 0.2)),
-                            )
-                        )
-
-                obstacles: List[Dict[str, Any]] = []
-                for item in list(info.get("perceived_obstacles", [])):
-                    d = dict(item)
-                    obstacles.append(
-                        {
-                            "center": np.asarray(d["center"], dtype=np.float32).reshape(2),
-                            "radius": float(d["radius"]),
-                        }
-                    )
-
-                adv = float(tr.advantage if tr.advantage is not None else tr.return_target if tr.return_target is not None else 0.0)
+                adv = float(
+                    tr.advantage if tr.advantage is not None else tr.return_target if tr.return_target is not None else 0.0
+                )
                 goal_dir = np.asarray(tr.obs_low.goal_relative, dtype=np.float32)
                 norm = float(np.linalg.norm(goal_dir))
                 if norm > 1e-6:
                     goal_dir = goal_dir / norm
                 delta = self.hooks.low_target_step_scale * adv * goal_dir
                 target_action = np.asarray(tr.action, dtype=np.float32) + delta
-                safety_constraints = dict(info.get("safety_constraints", {}))
                 if bool(safety_constraints.get("use_input_bounds", True)):
-                    target_u_min = np.asarray(safety_constraints.get("u_min", self.constraint_builder.u_min), dtype=np.float32).reshape(2)
-                    target_u_max = np.asarray(safety_constraints.get("u_max", self.constraint_builder.u_max), dtype=np.float32).reshape(2)
+                    target_u_min = np.asarray(
+                        safety_constraints.get("u_min", self.constraint_builder.u_min), dtype=np.float32
+                    ).reshape(2)
+                    target_u_max = np.asarray(
+                        safety_constraints.get("u_max", self.constraint_builder.u_max), dtype=np.float32
+                    ).reshape(2)
                     target_action = np.clip(target_action, target_u_min, target_u_max)
 
                 out = self.backward_low_level_diff_step(
@@ -639,6 +876,126 @@ class TrainerSyncOnPolicy:
             "n_updates": float(n_updates),
             "loss_mean": float(sum(losses) / max(1, len(losses))),
             "loss_last": float(losses[-1] if losses else 0.0),
+        }
+
+    def _update_low_level_onpolicy_ppo(self) -> Dict[str, float]:
+        if torch is None:
+            raise RuntimeError("PyTorch is required for on-policy low-level updates")
+        if self.diff_qp_solver is None or self.low_level_optimizer is None:
+            return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
+        if self.low_policy is None or not hasattr(self.low_policy, "forward") or not hasattr(self.low_policy, "low_value"):
+            raise RuntimeError("low_policy must provide forward(...) and low_value(...) for on-policy low-level updates")
+        if self.low_level_controller is None:
+            raise RuntimeError("low level controller is not set")
+
+        low_steps = self.buffer.snapshot()[0]
+        if len(low_steps) == 0:
+            return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
+
+        selected = list(low_steps)[-self.hooks.low_max_samples_per_iter :]
+        ppo_samples = [tr for tr in selected if tr.logp is not None and tr.return_target is not None]
+        if len(ppo_samples) == 0:
+            return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
+
+        adv_np = np.asarray(
+            [
+                float(tr.advantage if tr.advantage is not None else tr.return_target if tr.return_target is not None else 0.0)
+                for tr in ppo_samples
+            ],
+            dtype=np.float32,
+        )
+        if bool(self.hooks.low_normalize_advantages) and adv_np.size > 1:
+            adv_mean = float(np.mean(adv_np))
+            adv_std = float(np.std(adv_np) + 1e-6)
+            adv_np = (adv_np - adv_mean) / adv_std
+
+        clip_ratio = float(self.hooks.low_ppo_clip_ratio)
+        value_coef = float(self.hooks.low_ppo_value_coef)
+        entropy_coef = float(self.hooks.low_ppo_entropy_coef)
+        max_grad_norm = float(self.hooks.low_ppo_max_grad_norm)
+
+        loss_all: List[float] = []
+        loss_actor_all: List[float] = []
+        loss_value_all: List[float] = []
+        entropy_all: List[float] = []
+        n_updates = 0
+
+        n_epochs = max(1, int(self.hooks.low_ppo_epochs))
+        for _ in range(n_epochs):
+            order = np.random.permutation(len(ppo_samples))
+            for idx in order:
+                tr = ppo_samples[int(idx)]
+                adv = float(adv_np[int(idx)])
+                state, neighbors, obstacles, safety_constraints, skill_u_ref = self._extract_local_context_from_info(tr)
+                constants, _, _ = self._build_diff_constants(
+                    state_i=state,
+                    neighbors=neighbors,
+                    obstacles=obstacles,
+                    safety_constraints=safety_constraints,
+                )
+                obs_tensor = torch.as_tensor(tr.obs_low.flat, dtype=torch.float32).unsqueeze(0)
+                skill_tensor = torch.as_tensor([int(tr.skill_id)], dtype=torch.long)
+                qp_param_raw = self.low_policy(obs_tensor, skill_tensor)
+                qp_param = self._flatten_qp_param_torch(qp_param_raw)
+                dtype = torch.float32
+                device = constants.A_cbf.device
+                skill_u_ref_t = torch.as_tensor(skill_u_ref, dtype=dtype, device=device).reshape(2)
+                policy_u_ref_t = qp_param.u_ref.reshape(2).to(device=device, dtype=dtype)
+                skill_ref_weight = float(self.low_level_controller.skill_ref_weight)
+                fused_mean_u_ref = skill_ref_weight * skill_u_ref_t + (1.0 - skill_ref_weight) * policy_u_ref_t
+                qp_param_mean = QPParam(
+                    u_ref=fused_mean_u_ref,
+                    r_diag=qp_param.r_diag,
+                    w_clf=qp_param.w_clf,
+                    cbf_k0=qp_param.cbf_k0,
+                    cbf_k1=qp_param.cbf_k1,
+                    clf_k=qp_param.clf_k,
+                    f_lin=None,
+                    hocbf_gamma_h=qp_param.hocbf_gamma_h,
+                    hocbf_gamma_hdot=qp_param.hocbf_gamma_hdot,
+                )
+                mean_out = self.diff_qp_solver.solve(qp_param_mean, constants)
+                mean_action = mean_out.action.reshape(2)
+                sample_action = torch.as_tensor(
+                    np.asarray(tr.info.get("low_policy_action_sample", tr.action), dtype=np.float32).reshape(2),
+                    dtype=dtype,
+                    device=device,
+                )
+                std = max(1e-3, float(tr.info.get("low_policy_action_std", self.hooks.low_policy_action_std)))
+                dist = torch.distributions.Normal(mean_action, torch.full_like(mean_action, std))
+                new_logp = torch.sum(dist.log_prob(sample_action))
+                old_logp = torch.as_tensor(float(tr.logp), dtype=dtype, device=device)
+                adv_t = torch.as_tensor(adv, dtype=dtype, device=device)
+                ratio = torch.exp(new_logp - old_logp)
+                surr1 = ratio * adv_t
+                surr2 = torch.clamp(ratio, 1.0 - clip_ratio, 1.0 + clip_ratio) * adv_t
+                actor_loss = -torch.minimum(surr1, surr2)
+
+                value_pred = self.low_policy.low_value(obs_tensor, skill_tensor).reshape(1).to(device=device, dtype=dtype)[0]
+                ret_t = torch.as_tensor(float(tr.return_target), dtype=dtype, device=device)
+                value_loss = 0.5 * (value_pred - ret_t) ** 2
+                entropy_bonus = torch.sum(dist.entropy())
+
+                total_loss = actor_loss + value_coef * value_loss - entropy_coef * entropy_bonus
+                self.low_level_optimizer.zero_grad(set_to_none=True)
+                total_loss.backward()
+                if max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(self.low_policy.parameters(), max_grad_norm)
+                self.low_level_optimizer.step()
+
+                loss_all.append(float(total_loss.detach().cpu().item()))
+                loss_actor_all.append(float(actor_loss.detach().cpu().item()))
+                loss_value_all.append(float(value_loss.detach().cpu().item()))
+                entropy_all.append(float(entropy_bonus.detach().cpu().item()))
+                n_updates += 1
+
+        return {
+            "n_updates": float(n_updates),
+            "loss_mean": float(sum(loss_all) / max(1, len(loss_all))),
+            "loss_last": float(loss_all[-1] if loss_all else 0.0),
+            "loss_actor": float(sum(loss_actor_all) / max(1, len(loss_actor_all))),
+            "loss_value": float(sum(loss_value_all) / max(1, len(loss_value_all))),
+            "entropy": float(sum(entropy_all) / max(1, len(entropy_all))),
         }
 
     def update_high_level(self) -> Dict[str, float]:

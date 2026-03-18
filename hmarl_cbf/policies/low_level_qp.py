@@ -48,11 +48,15 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         self.cbf_k0_head = nn.Linear(hidden_dim, 1)
         self.cbf_k1_head = nn.Linear(hidden_dim, 1)
         self.clf_k_head = nn.Linear(hidden_dim, 1)
+        self.low_value_head = nn.Linear(hidden_dim, 1)
 
-    def forward(self, obs_low: Tensor, skill_id: Tensor) -> QPParam:
+    def _encode(self, obs_low: Tensor, skill_id: Tensor) -> Tensor:
         skill_feat = self.skill_embedding(skill_id)
         obs_feat = self.obs_encoder(obs_low)
-        fused = self.fusion(torch.cat([obs_feat, skill_feat], dim=-1))
+        return self.fusion(torch.cat([obs_feat, skill_feat], dim=-1))
+
+    def forward(self, obs_low: Tensor, skill_id: Tensor) -> QPParam:
+        fused = self._encode(obs_low, skill_id)
 
         u_ref = self.u_ref_head(fused)
         r_diag = F.softplus(self.r_diag_head(fused)) + 1e-4
@@ -71,3 +75,7 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
             hocbf_gamma_h=None,
             hocbf_gamma_hdot=None,
         )
+
+    def low_value(self, obs_low: Tensor, skill_id: Tensor) -> Tensor:
+        fused = self._encode(obs_low, skill_id)
+        return self.low_value_head(fused).reshape(-1)

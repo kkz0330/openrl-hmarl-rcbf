@@ -155,12 +155,23 @@ class LowLevelSafeController:
         skill_id: int,
         skill_u_ref: np.ndarray,
         safety_constraints: Dict[str, Any] | None = None,
+        qp_param_override: QPParam | None = None,
+        policy_u_ref_override: np.ndarray | None = None,
+        fused_u_ref_override: np.ndarray | None = None,
     ) -> LowLevelControlOutput:
-        qp_param = self._infer_qp_param(obs_low=obs_low, skill_id=skill_id)
-        fused_u_ref = self._fuse_u_ref(
-            policy_u_ref=np.asarray(qp_param.u_ref, dtype=np.float32).reshape(2),
-            skill_u_ref=np.asarray(skill_u_ref, dtype=np.float32).reshape(2),
-        )
+        qp_param = qp_param_override if qp_param_override is not None else self._infer_qp_param(obs_low=obs_low, skill_id=skill_id)
+        if fused_u_ref_override is not None:
+            fused_u_ref = np.asarray(fused_u_ref_override, dtype=np.float32).reshape(2)
+        else:
+            policy_u_ref = (
+                np.asarray(policy_u_ref_override, dtype=np.float32).reshape(2)
+                if policy_u_ref_override is not None
+                else np.asarray(qp_param.u_ref, dtype=np.float32).reshape(2)
+            )
+            fused_u_ref = self._fuse_u_ref(
+                policy_u_ref=policy_u_ref,
+                skill_u_ref=np.asarray(skill_u_ref, dtype=np.float32).reshape(2),
+            )
         fused_f_lin = -(
             np.asarray(qp_param.r_diag, dtype=np.float32).reshape(2)
             * np.asarray(fused_u_ref, dtype=np.float32).reshape(2)
@@ -209,9 +220,15 @@ class LowLevelSafeController:
         obs_low: Mapping[int, AgentObsLow],
         skill_targets: Mapping[int, Dict[str, Any]],
         obstacles: list[Dict[str, np.ndarray | float]],
+        qp_param_overrides: Mapping[int, QPParam] | None = None,
+        policy_u_ref_overrides: Mapping[int, np.ndarray] | None = None,
+        fused_u_ref_overrides: Mapping[int, np.ndarray] | None = None,
     ) -> Tuple[Dict[int, np.ndarray], Dict[int, LowLevelControlOutput]]:
         actions: Dict[int, np.ndarray] = {}
         outputs: Dict[int, LowLevelControlOutput] = {}
+        qp_param_overrides = dict(qp_param_overrides or {})
+        policy_u_ref_overrides = dict(policy_u_ref_overrides or {})
+        fused_u_ref_overrides = dict(fused_u_ref_overrides or {})
         for agent_id, state_i in states.items():
             if agent_id not in skill_targets:
                 raise KeyError(f"missing skill target for agent {agent_id}")
@@ -232,6 +249,9 @@ class LowLevelSafeController:
                 skill_id=skill_id,
                 skill_u_ref=skill_u_ref,
                 safety_constraints=safety_constraints,
+                qp_param_override=qp_param_overrides.get(agent_id, None),
+                policy_u_ref_override=policy_u_ref_overrides.get(agent_id, None),
+                fused_u_ref_override=fused_u_ref_overrides.get(agent_id, None),
             )
             actions[agent_id] = np.asarray(out.solution.action, dtype=np.float32).reshape(2)
             outputs[agent_id] = out

@@ -43,6 +43,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--total-iterations", type=int, default=-1)
     parser.add_argument("--eval-interval", type=int, default=-1)
     parser.add_argument("--seed", type=int, default=-1)
+    parser.add_argument("--low-update-mode", type=str, default="", help="Override low-level update mode.")
+    parser.add_argument("--low-ppo-epochs", type=int, default=-1, help="Override low-level PPO epochs.")
+    parser.add_argument("--low-policy-action-std", type=float, default=-1.0, help="Override low-level action std.")
     parser.add_argument("--eval-episodes", type=int, default=1, help="Periodic evaluation episodes during training.")
     parser.add_argument("--final-eval-episodes", type=int, default=3, help="Final evaluation episodes with rendering.")
     parser.add_argument("--final-render-gif", action="store_true", help="Render final evaluation as GIF files.")
@@ -225,6 +228,14 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         low_update_epochs=int(cfg["train"]["low_update_epochs"]),
         low_max_samples_per_iter=int(cfg["train"]["low_max_samples_per_iter"]),
         low_target_step_scale=float(cfg["train"]["low_target_step_scale"]),
+        low_update_mode=str(cfg["train"].get("low_update_mode", "target_regression")),
+        low_ppo_epochs=int(cfg["train"].get("low_ppo_epochs", cfg["train"].get("low_update_epochs", 2))),
+        low_ppo_clip_ratio=float(cfg["train"].get("low_ppo_clip_ratio", 0.2)),
+        low_ppo_value_coef=float(cfg["train"].get("low_ppo_value_coef", 0.5)),
+        low_ppo_entropy_coef=float(cfg["train"].get("low_ppo_entropy_coef", 0.0)),
+        low_ppo_max_grad_norm=float(cfg["train"].get("low_ppo_max_grad_norm", 0.5)),
+        low_policy_action_std=float(cfg["train"].get("low_policy_action_std", 0.2)),
+        low_normalize_advantages=bool(cfg["train"].get("low_normalize_advantages", True)),
         eval_episodes=int(eval_episodes),
         eval_deterministic=bool(deterministic_eval),
         eval_render=False,
@@ -266,6 +277,12 @@ def main() -> None:
         cfg["train"]["total_iterations"] = int(args.total_iterations)
     if args.eval_interval > 0:
         cfg["train"]["eval_interval"] = int(args.eval_interval)
+    if str(args.low_update_mode).strip():
+        cfg["train"]["low_update_mode"] = str(args.low_update_mode).strip()
+    if args.low_ppo_epochs > 0:
+        cfg["train"]["low_ppo_epochs"] = int(args.low_ppo_epochs)
+    if args.low_policy_action_std > 0:
+        cfg["train"]["low_policy_action_std"] = float(args.low_policy_action_std)
 
     _seed_all(seed)
 
@@ -320,6 +337,9 @@ def main() -> None:
             "low_samples": float(rollout.get("low_samples", 0.0)),
             "loss_high_total": float(high.get("loss_total", 0.0)),
             "loss_low_mean": float(low.get("loss_mean", 0.0)),
+            "loss_low_actor": float(low.get("loss_actor", 0.0)),
+            "loss_low_value": float(low.get("loss_value", 0.0)),
+            "low_entropy": float(low.get("entropy", 0.0)),
         }
         if itr == 1 or itr % eval_interval == 0 or itr == total_iterations:
             last_eval = trainer.evaluate()

@@ -92,9 +92,17 @@ train:
   lam_high: 0.95
   gamma_low: 0.99
   low_ext_reward_coef: 0.0
+  low_update_mode: target_regression
   low_update_epochs: 1
   low_max_samples_per_iter: 256
   low_target_step_scale: 0.05
+  low_ppo_epochs: 2
+  low_ppo_clip_ratio: 0.2
+  low_ppo_value_coef: 0.5
+  low_ppo_entropy_coef: 0.0
+  low_ppo_max_grad_norm: 0.5
+  low_policy_action_std: 0.2
+  low_normalize_advantages: true
 
 buffer_postprocess:
   gamma_high: 0.99
