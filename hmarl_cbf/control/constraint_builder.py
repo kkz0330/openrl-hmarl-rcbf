@@ -78,6 +78,23 @@ class ConstraintBuilder:
                     share=cbf_share_agent,
                     eps=cbf_eps,
                 )
+            elif cbf_mode == "distributed_gcbfplus":
+                # GCBF+ dec-share style for double-integrator pairwise barrier:
+                # h0 = ||p_rel||^2 - d_safe^2
+                # h1 = h0_dot + alpha0 * h0, with h0_dot = 2 p_rel^T v_rel
+                # -L_g h1 u_i <= resp * (L_f h1 + alpha1 * h1)
+                h0 = float(np.dot(p_rel, p_rel) - d_min_agent**2)
+                pv = float(np.dot(p_rel, v_rel))
+                h0_dot = 2.0 * pv
+                alpha0 = k0 * hocbf_gamma_h
+                alpha1 = k1 * hocbf_gamma_hdot
+                h1 = h0_dot + alpha0 * h0
+                lf_h1 = 2.0 * float(np.dot(v_rel, v_rel)) + 2.0 * alpha0 * pv
+                a_row = (-2.0 * p_rel).astype(np.float32)  # -L_g h1 wrt u_i
+                b_row = cbf_share_agent * (lf_h1 + alpha1 * h1)
+                A_cbf_rows.append(a_row)
+                b_cbf_rows.append(float(b_row))
+                continue
             else:
                 # ECBF-like linearization wrt u_i, distributed assumption on u_j.
                 h_term = float(np.dot(p_rel, p_rel) - d_min_agent**2)
@@ -102,6 +119,19 @@ class ConstraintBuilder:
                     share=cbf_share_obs,
                     eps=cbf_eps,
                 )
+            elif cbf_mode == "distributed_gcbfplus":
+                h0 = float(np.dot(p_rel, p_rel) - (radius + d_safe_obs) ** 2)
+                pv = float(np.dot(p_rel, state_i.velocity))
+                h0_dot = 2.0 * pv
+                alpha0 = k0 * hocbf_gamma_h
+                alpha1 = k1 * hocbf_gamma_hdot
+                h1 = h0_dot + alpha0 * h0
+                lf_h1 = 2.0 * float(np.dot(state_i.velocity, state_i.velocity)) + 2.0 * alpha0 * pv
+                a_row = (-2.0 * p_rel).astype(np.float32)
+                b_row = cbf_share_obs * (lf_h1 + alpha1 * h1)
+                A_cbf_rows.append(a_row)
+                b_cbf_rows.append(float(b_row))
+                continue
             else:
                 h_term = float(np.dot(p_rel, p_rel) - (radius + d_safe_obs) ** 2)
                 hdot_term = float(2.0 * np.dot(p_rel, state_i.velocity))

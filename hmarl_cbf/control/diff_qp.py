@@ -27,9 +27,15 @@ class DiffConstraintConstants:
     """State-dependent constants; QP coefficients are produced by network outputs."""
 
     A_cbf: Tensor
+    cbf_mode: str
     cbf_const: Tensor
     cbf_h: Tensor
     cbf_hdot: Tensor
+    cbf_h0: Tensor
+    cbf_h0dot: Tensor
+    cbf_pv: Tensor
+    cbf_v2: Tensor
+    cbf_resp: Tensor
     A_clf: Tensor
     clf_V: Tensor
     u_min: Tensor
@@ -138,11 +144,18 @@ class TorchDifferentiableQPSolver:
             else torch.tensor(1.0, device=device, dtype=dtype)
         )
         clf_k = torch.reshape(torch.as_tensor(qp_param.clf_k, device=device, dtype=dtype), ())
-        b_cbf = (
-            constants.cbf_const
-            + (cbf_k1 * hocbf_gamma_hdot) * constants.cbf_hdot
-            + (cbf_k0 * hocbf_gamma_h) * constants.cbf_h
-        )
+        if constants.cbf_mode == "distributed_gcbfplus":
+            alpha0 = cbf_k0 * hocbf_gamma_h
+            alpha1 = cbf_k1 * hocbf_gamma_hdot
+            h1 = constants.cbf_h0dot + alpha0 * constants.cbf_h0
+            lf_h1 = 2.0 * constants.cbf_v2 + 2.0 * alpha0 * constants.cbf_pv
+            b_cbf = constants.cbf_resp * (lf_h1 + alpha1 * h1)
+        else:
+            b_cbf = (
+                constants.cbf_const
+                + (cbf_k1 * hocbf_gamma_hdot) * constants.cbf_hdot
+                + (cbf_k0 * hocbf_gamma_h) * constants.cbf_h
+            )
         b_clf = -clf_k * constants.clf_V
 
         layer = self._get_layer(m_cbf=m_cbf, m_clf=m_clf, n_u=n_u)
@@ -233,6 +246,11 @@ def build_diff_constraint_constants(
     cbf_const_terms: List[Tensor] = []
     cbf_h_terms: List[Tensor] = []
     cbf_hdot_terms: List[Tensor] = []
+    cbf_h0_terms: List[Tensor] = []
+    cbf_h0dot_terms: List[Tensor] = []
+    cbf_pv_terms: List[Tensor] = []
+    cbf_v2_terms: List[Tensor] = []
+    cbf_resp_terms: List[Tensor] = []
 
     for state_j in neighbors:
         p_j = torch.tensor(state_j.position, dtype=dtype, device=dev)
@@ -254,6 +272,25 @@ def build_diff_constraint_constants(
             cbf_const_terms.append(const_term)
             cbf_h_terms.append(h_term)
             cbf_hdot_terms.append(hdot_term)
+            cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
+        elif cbf_mode == "distributed_gcbfplus":
+            h0 = torch.dot(p_rel, p_rel) - torch.tensor(float(d_min_agent**2), dtype=dtype, device=dev)
+            pv = torch.dot(p_rel, v_rel)
+            h0_dot = 2.0 * pv
+            v2 = torch.dot(v_rel, v_rel)
+            A_rows.append(-2.0 * p_rel)
+            cbf_const_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_h_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_h0_terms.append(h0)
+            cbf_h0dot_terms.append(h0_dot)
+            cbf_pv_terms.append(pv)
+            cbf_v2_terms.append(v2)
+            cbf_resp_terms.append(torch.tensor(float(cbf_share_agent), dtype=dtype, device=dev))
         else:
             h = torch.dot(p_rel, p_rel) - torch.tensor(float(d_min_agent**2), dtype=dtype, device=dev)
             h_dot = 2.0 * torch.dot(p_rel, v_rel)
@@ -262,6 +299,11 @@ def build_diff_constraint_constants(
             cbf_const_terms.append(cbf_const)
             cbf_h_terms.append(h)
             cbf_hdot_terms.append(h_dot)
+            cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
 
     for obs in obstacles:
         center = torch.tensor(np.asarray(obs["center"], dtype=np.float32).reshape(2), dtype=dtype, device=dev)
@@ -282,6 +324,25 @@ def build_diff_constraint_constants(
             cbf_const_terms.append(const_term)
             cbf_h_terms.append(h_term)
             cbf_hdot_terms.append(hdot_term)
+            cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
+        elif cbf_mode == "distributed_gcbfplus":
+            h0 = torch.dot(p_rel, p_rel) - torch.tensor(float((radius + d_safe_obs) ** 2), dtype=dtype, device=dev)
+            pv = torch.dot(p_rel, v_i)
+            h0_dot = 2.0 * pv
+            v2 = torch.dot(v_i, v_i)
+            A_rows.append(-2.0 * p_rel)
+            cbf_const_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_h_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_h0_terms.append(h0)
+            cbf_h0dot_terms.append(h0_dot)
+            cbf_pv_terms.append(pv)
+            cbf_v2_terms.append(v2)
+            cbf_resp_terms.append(torch.tensor(float(cbf_share_obs), dtype=dtype, device=dev))
         else:
             h = torch.dot(p_rel, p_rel) - torch.tensor(float((radius + d_safe_obs) ** 2), dtype=dtype, device=dev)
             h_dot = 2.0 * torch.dot(p_rel, v_i)
@@ -290,6 +351,11 @@ def build_diff_constraint_constants(
             cbf_const_terms.append(cbf_const)
             cbf_h_terms.append(h)
             cbf_hdot_terms.append(h_dot)
+            cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
 
     if len(A_rows) == 0:
         # Ensure at least one CBF row so the layer signature is stable.
@@ -297,11 +363,21 @@ def build_diff_constraint_constants(
         cbf_const = torch.zeros((1,), dtype=dtype, device=dev)
         cbf_h = torch.ones((1,), dtype=dtype, device=dev)
         cbf_hdot = torch.zeros((1,), dtype=dtype, device=dev)
+        cbf_h0 = torch.zeros((1,), dtype=dtype, device=dev)
+        cbf_h0dot = torch.zeros((1,), dtype=dtype, device=dev)
+        cbf_pv = torch.zeros((1,), dtype=dtype, device=dev)
+        cbf_v2 = torch.zeros((1,), dtype=dtype, device=dev)
+        cbf_resp = torch.ones((1,), dtype=dtype, device=dev)
     else:
         A_cbf = torch.stack(A_rows, dim=0).to(dtype=dtype, device=dev)
         cbf_const = torch.stack(cbf_const_terms, dim=0).to(dtype=dtype, device=dev)
         cbf_h = torch.stack(cbf_h_terms, dim=0).to(dtype=dtype, device=dev)
         cbf_hdot = torch.stack(cbf_hdot_terms, dim=0).to(dtype=dtype, device=dev)
+        cbf_h0 = torch.stack(cbf_h0_terms, dim=0).to(dtype=dtype, device=dev)
+        cbf_h0dot = torch.stack(cbf_h0dot_terms, dim=0).to(dtype=dtype, device=dev)
+        cbf_pv = torch.stack(cbf_pv_terms, dim=0).to(dtype=dtype, device=dev)
+        cbf_v2 = torch.stack(cbf_v2_terms, dim=0).to(dtype=dtype, device=dev)
+        cbf_resp = torch.stack(cbf_resp_terms, dim=0).to(dtype=dtype, device=dev)
 
     goal = torch.tensor(state_i.goal, dtype=dtype, device=dev)
     goal_vec = goal - p_i
@@ -324,9 +400,15 @@ def build_diff_constraint_constants(
 
     return DiffConstraintConstants(
         A_cbf=A_cbf,
+        cbf_mode=str(cbf_mode),
         cbf_const=cbf_const,
         cbf_h=cbf_h,
         cbf_hdot=cbf_hdot,
+        cbf_h0=cbf_h0,
+        cbf_h0dot=cbf_h0dot,
+        cbf_pv=cbf_pv,
+        cbf_v2=cbf_v2,
+        cbf_resp=cbf_resp,
         A_clf=A_clf,
         clf_V=clf_V,
         u_min=torch.tensor(np.asarray(u_min, dtype=np.float32).reshape(2), dtype=dtype, device=dev),

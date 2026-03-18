@@ -1,19 +1,20 @@
 seed: 42
+
 env:
   n_agents: 4
   n_obstacles: 3
   world_size: 10.0
   dt: 0.1
   horizon: 200
-  action_limit: 1.5
+  action_limit: 2.0
   velocity_limit: 2.0
   agent_radius: 0.2
   goal_threshold: 0.3
   goal_speed_threshold: 0.1
   lidar_beams: 32
-  lidar_range: 6.0
+  lidar_range: 4.5
   lidar_noise_std: 0.0
-  neighbor_radius: 4.0
+  neighbor_radius: 3.0
   max_neighbors: 4
   min_start_goal_separation: 1.0
   min_agent_separation: 0.8
@@ -24,24 +25,21 @@ env:
   reward_reach_bonus: 1.0
   reward_collision_penalty: 1.0
   reward_oob_penalty: 1.0
+
 synchronization:
   t_sync_max: 20
+
 safety:
   d_min_agent: 0.6
   d_safe_obs: 0.6
+
 skills:
-  names:
-  - turn_left
-  - turn_right
-  - accelerate
-  - decelerate
-  - cruise
-  - hover
+  names: ["turn_left", "turn_right", "accelerate", "decelerate", "cruise", "hover"]
   default_max_duration: 20
   params:
     goal_threshold: 0.3
     goal_speed_threshold: 0.1
-    action_limit: 1.5
+    action_limit: 2.0
     turn_min_speed: 0.2
     turn_target_angle: 0.6
     turn_heading_tol: 0.2
@@ -52,6 +50,10 @@ skills:
     ref_speed: 0.8
     d_min_agent: 0.6
     d_safe_obs: 0.6
+    cbf_mode: distributed_gcbfplus
+    cbf_share_agent: 0.5
+    cbf_share_obs: 1.0
+    use_input_bounds: true
     w_accel: 0.05
     w_turn: 0.03
     w_speed_dev: 0.04
@@ -62,10 +64,12 @@ skills:
     hover_vel_kd: 1.0
     w_hover_stop: 0.08
     w_hover_goal: 0.08
+
 model:
   high_hidden_dim: 128
   low_hidden_dim: 128
   action_dim: 2
+
 high_level_mappo:
   clip_ratio: 0.2
   entropy_coef: 0.01
@@ -74,12 +78,14 @@ high_level_mappo:
   ppo_epochs: 4
   minibatch_size: 64
   normalize_advantages: true
+
 qp:
   backend: cvxpylayers
   use_stub_if_unavailable: true
+
 train:
   rollout_steps: 200
-  total_iterations: 500
+  total_iterations: 1000
   eval_interval: 10
   gamma_high: 0.99
   lam_high: 0.95
@@ -88,6 +94,7 @@ train:
   low_update_epochs: 1
   low_max_samples_per_iter: 256
   low_target_step_scale: 0.05
+
 buffer_postprocess:
   gamma_high: 0.99
   lam_high: 0.95

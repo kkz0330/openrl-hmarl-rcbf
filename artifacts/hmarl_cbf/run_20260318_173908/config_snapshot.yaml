@@ -52,6 +52,9 @@ skills:
     ref_speed: 0.8
     d_min_agent: 0.6
     d_safe_obs: 0.6
+    cbf_mode: distributed_gcbfplus
+    cbf_share_agent: 0.5
+    cbf_share_obs: 1.0
     use_input_bounds: true
     w_accel: 0.05
     w_turn: 0.03
@@ -80,7 +83,7 @@ qp:
   use_stub_if_unavailable: true
 train:
   rollout_steps: 200
-  total_iterations: 500
+  total_iterations: 1000
   eval_interval: 10
   gamma_high: 0.99
   lam_high: 0.95
