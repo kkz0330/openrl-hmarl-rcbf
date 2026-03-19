@@ -182,6 +182,11 @@ class ConstraintBuilder:
                     ),
                 )
             )
+            slow_radius = float(overrides.get("slow_radius", 0.0))
+            if slow_radius > 0.0:
+                speed_scale = float(np.clip(goal_norm / slow_radius, 0.0, 1.0))
+                min_speed = float(overrides.get("goal_stop_min_speed", 0.0))
+                v_des_speed = max(min_speed, v_des_speed * speed_scale)
             v_des = v_des_speed * goal_dir
         v_err = state_i.velocity - v_des
         V = float(0.5 * np.dot(v_err, v_err))

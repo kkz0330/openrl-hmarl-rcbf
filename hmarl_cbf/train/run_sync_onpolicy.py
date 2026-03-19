@@ -96,6 +96,22 @@ def _seed_all(seed: int) -> None:
     torch.manual_seed(seed)
 
 
+def _set_high_entropy_coef(trainer: TrainerSyncOnPolicy, train_cfg: Dict[str, Any], itr: int, total_iterations: int) -> float:
+    if trainer.high_level_updater is None:
+        return float(train_cfg.get("high_entropy_coef_end", train_cfg.get("high_entropy_coef_start", 0.0)))
+    default_coef = float(trainer.high_level_updater.config.entropy_coef)
+    start = float(train_cfg.get("high_entropy_coef_start", default_coef))
+    end = float(train_cfg.get("high_entropy_coef_end", start))
+    decay_iters = max(1, int(train_cfg.get("high_entropy_decay_iters", total_iterations)))
+    if decay_iters <= 1:
+        coef = end
+    else:
+        alpha = min(1.0, max(0.0, float(itr - 1) / float(decay_iters - 1)))
+        coef = start + (end - start) * alpha
+    trainer.high_level_updater.config.entropy_coef = float(coef)
+    return float(coef)
+
+
 def _extract_low_policy_state_dict(ckpt: Dict[str, Any]) -> Dict[str, torch.Tensor]:
     low = ckpt.get("low_policy")
     if isinstance(low, dict):
@@ -236,6 +252,7 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         low_ppo_max_grad_norm=float(cfg["train"].get("low_ppo_max_grad_norm", 0.5)),
         low_policy_action_std=float(cfg["train"].get("low_policy_action_std", 0.2)),
         low_normalize_advantages=bool(cfg["train"].get("low_normalize_advantages", True)),
+        high_diversity_coef=float(cfg["train"].get("high_diversity_coef", 0.03)),
         eval_episodes=int(eval_episodes),
         eval_deterministic=bool(deterministic_eval),
         eval_render=False,
@@ -324,6 +341,7 @@ def main() -> None:
     eval_interval = max(1, int(cfg["train"]["eval_interval"]))
 
     for itr in range(1, total_iterations + 1):
+        high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
         rollout = trainer.collect_rollout()
         low = trainer.update_low_level()
         high = trainer.update_high_level()
@@ -332,7 +350,11 @@ def main() -> None:
             "steps_collected": float(rollout.get("steps_collected", 0.0)),
             "episode_return_mean": float(rollout.get("episode_return_mean", 0.0)),
             "safe_reach_ratio": float(rollout.get("safe_reach_ratio", 0.0)),
+            "skill_entropy_norm": float(rollout.get("skill_entropy_norm", 0.0)),
+            "top1_skill_ratio": float(rollout.get("top1_skill_ratio", 0.0)),
+            "high_div_bonus_mean": float(rollout.get("high_div_bonus_mean", 0.0)),
             "conv_eval_success_delta_w5": float("nan"),
+            "high_entropy_coef": float(high_entropy_coef),
             "high_samples": float(rollout.get("high_samples", 0.0)),
             "low_samples": float(rollout.get("low_samples", 0.0)),
             "loss_high_total": float(high.get("loss_total", 0.0)),
@@ -353,6 +375,8 @@ def main() -> None:
                 f"[iter {itr}/{total_iterations}] "
                 f"ret={row['episode_return_mean']:.4f} "
                 f"safe={row['safe_reach_ratio']:.4f} "
+                f"skillH={row['skill_entropy_norm']:.4f} "
+                f"top1={row['top1_skill_ratio']:.4f} "
                 f"succ={float(last_eval.get('eval_success_rate', 0.0)):.4f} "
                 f"coll={float(last_eval.get('eval_collision_rate', 0.0)):.4f} "
                 f"conv={row['conv_eval_success_delta_w5']:.4f}"

@@ -100,6 +100,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--obstacle-r", type=float, default=1.0)
     parser.add_argument("--init-vx", type=float, default=0.0)
     parser.add_argument("--init-vy", type=float, default=0.0)
+    parser.add_argument(
+        "--init-speed-to-goal",
+        type=float,
+        default=-1.0,
+        help="If >=0, override init-vx/init-vy and set initial speed toward goal direction.",
+    )
     parser.add_argument("--low-update-mode", type=str, default="target_regression")
     return parser.parse_args()
 
@@ -119,6 +125,22 @@ def _seed_all(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def _set_high_entropy_coef(trainer: TrainerSyncOnPolicy, train_cfg: Dict[str, Any], itr: int, total_iterations: int) -> float:
+    if trainer.high_level_updater is None:
+        return float(train_cfg.get("high_entropy_coef_end", train_cfg.get("high_entropy_coef_start", 0.0)))
+    default_coef = float(trainer.high_level_updater.config.entropy_coef)
+    start = float(train_cfg.get("high_entropy_coef_start", default_coef))
+    end = float(train_cfg.get("high_entropy_coef_end", start))
+    decay_iters = max(1, int(train_cfg.get("high_entropy_decay_iters", total_iterations)))
+    if decay_iters <= 1:
+        coef = end
+    else:
+        alpha = min(1.0, max(0.0, float(itr - 1) / float(decay_iters - 1)))
+        coef = start + (end - start) * alpha
+    trainer.high_level_updater.config.entropy_coef = float(coef)
+    return float(coef)
 
 
 def _write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
@@ -243,6 +265,7 @@ def _build_trainer(
         low_ppo_max_grad_norm=float(cfg["train"].get("low_ppo_max_grad_norm", 0.5)),
         low_policy_action_std=float(cfg["train"].get("low_policy_action_std", 0.2)),
         low_normalize_advantages=bool(cfg["train"].get("low_normalize_advantages", True)),
+        high_diversity_coef=float(cfg["train"].get("high_diversity_coef", 0.03)),
         eval_episodes=int(eval_episodes),
         eval_deterministic=bool(deterministic_eval),
         eval_render=False,
@@ -420,7 +443,15 @@ def main() -> None:
     start = np.asarray([args.start_x, args.start_y], dtype=np.float32)
     goal = np.asarray([args.goal_x, args.goal_y], dtype=np.float32)
     obstacle_center = np.asarray([args.obstacle_x, args.obstacle_y], dtype=np.float32)
-    initial_velocity = np.asarray([args.init_vx, args.init_vy], dtype=np.float32)
+    if float(args.init_speed_to_goal) >= 0.0:
+        goal_vec = goal - start
+        goal_dist = float(np.linalg.norm(goal_vec))
+        if goal_dist > 1e-6:
+            initial_velocity = (goal_vec / goal_dist) * float(args.init_speed_to_goal)
+        else:
+            initial_velocity = np.zeros(2, dtype=np.float32)
+    else:
+        initial_velocity = np.asarray([args.init_vx, args.init_vy], dtype=np.float32)
     obstacle_radius = float(args.obstacle_r)
 
     line_dist = _distance_point_to_segment(obstacle_center, start, goal)
@@ -460,6 +491,7 @@ def main() -> None:
     iter_video_dir = run_dir / "iter_videos"
 
     for itr in range(1, total_iterations + 1):
+        high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
         rollout = trainer.collect_rollout()
         seq = _extract_skill_sequence_for_single_agent(trainer, skill_names)
         skill_rows.append(
@@ -498,7 +530,11 @@ def main() -> None:
             "steps_collected": float(rollout.get("steps_collected", 0.0)),
             "episode_return_mean": float(rollout.get("episode_return_mean", 0.0)),
             "safe_reach_ratio": float(rollout.get("safe_reach_ratio", 0.0)),
+            "skill_entropy_norm": float(rollout.get("skill_entropy_norm", 0.0)),
+            "top1_skill_ratio": float(rollout.get("top1_skill_ratio", 0.0)),
+            "high_div_bonus_mean": float(rollout.get("high_div_bonus_mean", 0.0)),
             "conv_eval_success_delta_w5": float("nan"),
+            "high_entropy_coef": float(high_entropy_coef),
             "high_samples": float(rollout.get("high_samples", 0.0)),
             "low_samples": float(rollout.get("low_samples", 0.0)),
             "loss_high_total": float(high.get("loss_total", 0.0)),
@@ -519,6 +555,8 @@ def main() -> None:
                 f"[iter {itr}/{total_iterations}] "
                 f"ret={row['episode_return_mean']:.4f} "
                 f"safe={row['safe_reach_ratio']:.4f} "
+                f"skillH={row['skill_entropy_norm']:.4f} "
+                f"top1={row['top1_skill_ratio']:.4f} "
                 f"succ={float(last_eval.get('eval_success_rate', 0.0)):.4f} "
                 f"coll={float(last_eval.get('eval_collision_rate', 0.0)):.4f} "
                 f"conv={row['conv_eval_success_delta_w5']:.4f}"

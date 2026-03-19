@@ -3,7 +3,8 @@ import pytest
 
 from hmarl_cbf.skills import (
     SKILL_ACCELERATE,
-    SKILL_HOVER,
+    SKILL_CRUISE,
+    SKILL_DECELERATE,
     SKILL_TURN_LEFT,
     build_default_skill_library,
 )
@@ -68,22 +69,75 @@ def test_turn_initiation_requires_min_speed() -> None:
         mgr.activate_skill(agent_id=0, skill_id=SKILL_TURN_LEFT, state=state)
 
 
-def test_hover_skill_damps_velocity_near_goal() -> None:
+def test_accelerate_from_rest_outputs_nonzero_u_ref() -> None:
     skills = build_default_skill_library(max_duration=10)
     mgr = SkillRuntimeManager(
         skills,
         default_ctx={
-            "goal_threshold": 0.3,
-            "hover_speed_tol": 0.1,
-            "hover_goal_kp": 1.2,
-            "hover_vel_kd": 1.0,
             "action_limit": 1.0,
+            "target_speed": 1.0,
+            "accelerate_delta_speed": 0.3,
+            "accelerate_speed_kp": 1.0,
         },
     )
-    state = _make_state(position=[0.05, 0.0], velocity=[0.4, 0.0], goal=[0.0, 0.0], agent_id=0)
+    state = _make_state(position=[0.0, 0.0], velocity=[0.0, 0.0], goal=[10.0, 0.0], agent_id=0)
     obs = _make_obs(state)
-    mgr.activate_skill(agent_id=0, skill_id=SKILL_HOVER, state=state)
+    mgr.activate_skill(agent_id=0, skill_id=SKILL_ACCELERATE, state=state)
+    out = mgr.step(agent_id=0, state=state, obs_low=obs, executed_action=np.zeros(2, dtype=np.float32))
+    assert float(np.linalg.norm(out.u_ref_skill)) > 1e-4
+
+
+def test_accelerate_defaults_to_goal_heading() -> None:
+    skills = build_default_skill_library(max_duration=10)
+    mgr = SkillRuntimeManager(
+        skills,
+        default_ctx={
+            "action_limit": 2.0,
+            "target_speed": 1.2,
+            "accelerate_delta_speed": 0.4,
+            "accelerate_speed_kp": 1.0,
+            "accelerate_heading_blend": 0.0,
+        },
+    )
+    state = _make_state(position=[0.0, 0.0], velocity=[1.0, 0.0], goal=[0.0, 10.0], agent_id=0)
+    obs = _make_obs(state)
+    mgr.activate_skill(agent_id=0, skill_id=SKILL_ACCELERATE, state=state)
+    out = mgr.step(agent_id=0, state=state, obs_low=obs, executed_action=np.zeros(2, dtype=np.float32))
+    assert out.u_ref_skill[1] > 0.0
+
+
+def test_cruise_holds_activation_speed() -> None:
+    skills = build_default_skill_library(max_duration=10)
+    mgr = SkillRuntimeManager(
+        skills,
+        default_ctx={
+            "goal_threshold": 0.1,
+            "action_limit": 1.0,
+            "cruise_speed_kp": 1.0,
+        },
+    )
+    state = _make_state(position=[0.0, 0.0], velocity=[0.4, 0.0], goal=[10.0, 0.0], agent_id=0)
+    obs = _make_obs(state)
+    mgr.activate_skill(agent_id=0, skill_id=SKILL_CRUISE, state=state)
     out = mgr.step(agent_id=0, state=state, obs_low=obs, executed_action=np.zeros(2, dtype=np.float32))
 
     assert out.u_ref_skill.shape == (2,)
-    assert out.u_ref_skill[0] < 0.0
+    assert abs(float(out.u_ref_skill[0])) < 1e-3
+
+
+def test_decelerate_zero_velocity_deadzone() -> None:
+    skills = build_default_skill_library(max_duration=10)
+    mgr = SkillRuntimeManager(
+        skills,
+        default_ctx={
+            "decelerate_init_min_speed": 0.0,
+            "decelerate_stop_eps": 0.05,
+            "decelerate_kv": 1.5,
+            "action_limit": 2.0,
+        },
+    )
+    state = _make_state(position=[0.0, 0.0], velocity=[0.01, 0.0], goal=[1.0, 0.0], agent_id=0)
+    obs = _make_obs(state)
+    mgr.activate_skill(agent_id=0, skill_id=SKILL_DECELERATE, state=state)
+    out = mgr.step(agent_id=0, state=state, obs_low=obs, executed_action=np.zeros(2, dtype=np.float32))
+    assert float(np.linalg.norm(out.u_ref_skill)) <= 1e-6

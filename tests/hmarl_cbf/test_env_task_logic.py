@@ -55,3 +55,21 @@ def test_env_sampling_non_overlapping_starts() -> None:
         for j in range(i + 1, len(states)):
             dist = np.linalg.norm(states[i].position - states[j].position)
             assert dist >= 0.9
+
+
+def test_env_initial_speed_toward_goal() -> None:
+    env = MultiUAV2DEnv(n_agents=1, n_obstacles=0, initial_speed_toward_goal=0.6)
+    _, _ = env.reset(
+        seed=11,
+        options={
+            "states": [
+                {"position": [0.0, 0.0], "goal": [3.0, 4.0]},
+            ]
+        },
+    )
+    state = env.get_agent_states()[0]
+    speed = float(np.linalg.norm(state.velocity))
+    assert abs(speed - 0.6) < 1e-5
+    goal_dir = np.asarray([3.0, 4.0], dtype=np.float32) / 5.0
+    vel_dir = state.velocity / max(1e-8, float(np.linalg.norm(state.velocity)))
+    assert float(np.dot(goal_dir, vel_dir)) > 0.999

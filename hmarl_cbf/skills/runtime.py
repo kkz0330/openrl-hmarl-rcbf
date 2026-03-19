@@ -83,7 +83,9 @@ class SkillRuntimeManager:
         ctx["max_duration"] = int(skill.max_duration)
 
         heading = self._heading_from_state(state)
+        start_speed = float(np.linalg.norm(state.velocity))
         ctx["start_heading"] = heading
+        ctx["start_speed"] = start_speed
         if skill.skill_id == SKILL_TURN_LEFT:
             turn_angle = float(ctx.get("turn_target_angle", 0.6))
             ctx["target_heading"] = heading + turn_angle
@@ -94,6 +96,8 @@ class SkillRuntimeManager:
             ctx["heading_ref"] = heading - turn_angle
         else:
             ctx["heading_ref"] = heading
+        if skill.name == "cruise":
+            ctx["cruise_ref_speed"] = float(ctx.get("cruise_ref_speed", start_speed))
         return ctx
 
     def activate_skill(

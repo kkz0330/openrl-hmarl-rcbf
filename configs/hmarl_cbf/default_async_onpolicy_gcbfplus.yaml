@@ -25,6 +25,7 @@ env:
   reward_reach_bonus: 1.0
   reward_collision_penalty: 1.0
   reward_oob_penalty: 1.0
+  initial_speed_toward_goal: 0.0
 
 synchronization:
   mode: async
@@ -35,7 +36,7 @@ safety:
   d_safe_obs: 0.3
 
 skills:
-  names: ["turn_left", "turn_right", "accelerate", "decelerate", "cruise", "hover"]
+  names: ["turn_left", "turn_right", "accelerate", "decelerate", "cruise"]
   default_max_duration: 20
   params:
     goal_threshold: 0.3
@@ -47,8 +48,13 @@ skills:
     turn_vmag: 0.8
     turn_track_kp: 1.0
     target_speed: 1.2
-    decelerate_target_speed: 0.3
+    accelerate_heading_blend: 0.0
+    decelerate_target_speed: 0.05
+    decelerate_stop_eps: 0.05
+    decelerate_kv: 1.5
     ref_speed: 1.2
+    slow_radius: 1.5
+    goal_stop_min_speed: 0.0
     d_min_agent: 0.3
     d_safe_obs: 0.3
     cbf_mode: distributed_gcbfplus
@@ -60,11 +66,7 @@ skills:
     w_speed_dev: 0.04
     w_heading_dev: 0.02
     w_progress: 0.02
-    hover_speed_tol: 0.1
-    hover_goal_kp: 1.2
-    hover_vel_kd: 1.0
-    w_hover_stop: 0.08
-    w_hover_goal: 0.08
+    w_goal_align_far: 0.03
 
 model:
   high_hidden_dim: 128
@@ -88,6 +90,10 @@ train:
   rollout_steps: 200
   total_iterations: 1000
   eval_interval: 10
+  high_entropy_coef_start: 0.05
+  high_entropy_coef_end: 0.01
+  high_entropy_decay_iters: 700
+  high_diversity_coef: 0.03
   gamma_high: 0.99
   lam_high: 0.95
   gamma_low: 0.99

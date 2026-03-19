@@ -37,7 +37,6 @@ skills:
   - accelerate
   - decelerate
   - cruise
-  - hover
   default_max_duration: 20
   params:
     goal_threshold: 0.3
@@ -49,6 +48,7 @@ skills:
     turn_vmag: 0.8
     turn_track_kp: 1.0
     target_speed: 1.2
+    accelerate_heading_blend: 0.0
     decelerate_target_speed: 0.3
     ref_speed: 1.2
     d_min_agent: 0.3
@@ -62,11 +62,6 @@ skills:
     w_speed_dev: 0.04
     w_heading_dev: 0.02
     w_progress: 0.02
-    hover_speed_tol: 0.1
-    hover_goal_kp: 1.2
-    hover_vel_kd: 1.0
-    w_hover_stop: 0.08
-    w_hover_goal: 0.08
 model:
   high_hidden_dim: 128
   low_hidden_dim: 128
@@ -84,8 +79,12 @@ qp:
   use_stub_if_unavailable: true
 train:
   rollout_steps: 200
-  total_iterations: 200
-  eval_interval: 10
+  total_iterations: 500
+  eval_interval: 20
+  high_entropy_coef_start: 0.05
+  high_entropy_coef_end: 0.01
+  high_entropy_decay_iters: 700
+  high_diversity_coef: 0.03
   gamma_high: 0.99
   lam_high: 0.95
   gamma_low: 0.99

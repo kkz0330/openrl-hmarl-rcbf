@@ -21,7 +21,7 @@ from hmarl_cbf.control import (
 )
 from hmarl_cbf.eval import EpisodeTrace, EvalEpisodeStats, TrajectoryRenderer, evaluate_summary
 from hmarl_cbf.high_level import OnPolicyMAPPO
-from hmarl_cbf.skills import SKILL_HOVER, SkillRuntimeManager
+from hmarl_cbf.skills import SkillRuntimeManager
 from hmarl_cbf.types import AgentObsHigh, AgentObsLow, AgentState, LowStepTransition, QPParam
 
 
@@ -45,6 +45,7 @@ class TrainerHooks:
     low_policy_action_std: float = 0.20
     low_normalize_advantages: bool = True
     low_detach_value_head_in_actor: bool = True
+    high_diversity_coef: float = 0.03
     eval_episodes: int = 3
     eval_deterministic: bool = True
     eval_render: bool = False
@@ -100,6 +101,17 @@ class TrainerSyncOnPolicy:
     def set_low_level_optimizer(self, low_level_optimizer: Any) -> None:
         self.low_level_optimizer = low_level_optimizer
 
+    @staticmethod
+    def _normalized_entropy_from_counts(skill_counts: Dict[int, int]) -> float:
+        total = int(sum(int(v) for v in skill_counts.values()))
+        n = int(len(skill_counts))
+        if total <= 0 or n <= 1:
+            return 0.0
+        probs = np.asarray([float(v) / float(total) for v in skill_counts.values()], dtype=np.float32)
+        probs = np.clip(probs, 1e-12, 1.0)
+        entropy = float(-np.sum(probs * np.log(probs)))
+        return float(entropy / np.log(float(n)))
+
     def activate_round_skills(
         self,
         skill_map: Dict[int, int],
@@ -112,20 +124,6 @@ class TrainerSyncOnPolicy:
         actual_map: Dict[int, int] = {}
         for agent_id, preferred in skill_map.items():
             state = states[agent_id]
-            goal_threshold = float(self.skill_runtime.default_ctx.get("goal_threshold", 0.3))
-            reached_goal = float(np.linalg.norm(state.goal - state.position)) <= goal_threshold
-            if reached_goal and SKILL_HOVER in self.skill_runtime.skill_by_id:
-                try:
-                    self.skill_runtime.activate_skill(
-                        agent_id=agent_id,
-                        skill_id=SKILL_HOVER,
-                        state=state,
-                        extra_ctx=extra_ctx,
-                    )
-                    actual_map[agent_id] = int(SKILL_HOVER)
-                    continue
-                except ValueError:
-                    pass
 
             try:
                 self.skill_runtime.activate_skill(
@@ -598,9 +596,13 @@ class TrainerSyncOnPolicy:
         ep_return_ext = {aid: 0.0 for aid in agent_ids}
         round_return_ext = {aid: 0.0 for aid in agent_ids}
         round_discount = {aid: 1.0 for aid in agent_ids}
+        round_div_bonus = {aid: 0.0 for aid in agent_ids}
         done_by_agent = {aid: False for aid in agent_ids}
         reached_any = {aid: False for aid in agent_ids}
         unsafe_any = {aid: False for aid in agent_ids}
+        skill_counts_rollout = {int(sid): 0 for sid in sorted(self.skill_runtime.skill_by_id.keys())}
+        div_bonus_events: List[float] = []
+        high_div_coef = float(self.hooks.high_diversity_coef)
         last_obs = obs
         terminated = False
         truncated = False
@@ -631,6 +633,14 @@ class TrainerSyncOnPolicy:
             skill_map={aid: int(sampled[aid]["skill_id"]) for aid in agent_ids},
             states=states0,
         )
+        for aid in agent_ids:
+            sid = int(actual[aid])
+            h_before = self._normalized_entropy_from_counts(skill_counts_rollout)
+            skill_counts_rollout[sid] = int(skill_counts_rollout.get(sid, 0)) + 1
+            h_after = self._normalized_entropy_from_counts(skill_counts_rollout)
+            bonus = high_div_coef * (h_after - h_before)
+            round_div_bonus[aid] = float(bonus)
+            div_bonus_events.append(float(bonus))
         for aid in agent_ids:
             self.start_high_option(
                 k=int(self.coordinator.option_k[aid]),
@@ -749,10 +759,13 @@ class TrainerSyncOnPolicy:
                         self.close_high_option(
                             agent_id=aid,
                             t_end=t_end,
-                            return_ext=round_return_ext[aid],
+                            return_ext=round_return_ext[aid] + round_div_bonus[aid],
                             done=done_by_agent[aid],
                             sync_switch=True,
-                            info={"forced_sync": forced_end},
+                            info={
+                                "forced_sync": forced_end,
+                                "div_bonus": float(round_div_bonus[aid]),
+                            },
                         )
                 if forced_end:
                     break
@@ -765,6 +778,13 @@ class TrainerSyncOnPolicy:
                     states=states_round,
                 )
                 for aid in switched_agents:
+                    sid = int(actual[aid])
+                    h_before = self._normalized_entropy_from_counts(skill_counts_rollout)
+                    skill_counts_rollout[sid] = int(skill_counts_rollout.get(sid, 0)) + 1
+                    h_after = self._normalized_entropy_from_counts(skill_counts_rollout)
+                    bonus = high_div_coef * (h_after - h_before)
+                    round_div_bonus[aid] = float(bonus)
+                    div_bonus_events.append(float(bonus))
                     self.start_high_option(
                         k=int(step_sync.option_k[aid]),
                         agent_id=aid,
@@ -782,10 +802,13 @@ class TrainerSyncOnPolicy:
                 self.close_high_option(
                     agent_id=aid,
                     t_end=self.coordinator.t,
-                    return_ext=round_return_ext[aid],
+                    return_ext=round_return_ext[aid] + round_div_bonus[aid],
                     done=done_by_agent[aid],
                     sync_switch=True,
-                    info={"cutoff_close": True},
+                    info={
+                        "cutoff_close": True,
+                        "div_bonus": float(round_div_bonus[aid]),
+                    },
                 )
 
         bootstrap: Dict[int, float] = {}
@@ -808,12 +831,21 @@ class TrainerSyncOnPolicy:
         safe_reach_ratio = float(
             sum(1.0 for aid in agent_ids if reached_any[aid] and not unsafe_any[aid]) / n_agents
         )
+        total_skill_activations = int(sum(skill_counts_rollout.values()))
+        skill_entropy_norm = float(self._normalized_entropy_from_counts(skill_counts_rollout))
+        top1_skill_ratio = float(
+            max((int(v) for v in skill_counts_rollout.values()), default=0) / max(1, total_skill_activations)
+        )
+        div_bonus_mean = float(sum(div_bonus_events) / max(1, len(div_bonus_events)))
         return {
             "steps_collected": float(steps_collected),
             "episode_return_mean": float(sum(ep_return_ext.values()) / max(1, len(agent_ids))),
             "safe_reach_ratio": safe_reach_ratio,
             "high_samples": float(self.buffer.size_high()),
             "low_samples": float(self.buffer.size_low()),
+            "skill_entropy_norm": skill_entropy_norm,
+            "top1_skill_ratio": top1_skill_ratio,
+            "high_div_bonus_mean": div_bonus_mean,
             **post,
         }
 

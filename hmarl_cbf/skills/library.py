@@ -12,7 +12,6 @@ SKILL_TURN_RIGHT = 1
 SKILL_ACCELERATE = 2
 SKILL_DECELERATE = 3
 SKILL_CRUISE = 4
-SKILL_HOVER = 5
 
 
 def _norm(vec: np.ndarray, eps: float = 1e-6) -> float:
@@ -63,7 +62,7 @@ def _clip_action(action: np.ndarray, ctx: Dict[str, Any]) -> np.ndarray:
     return np.clip(action, -limit, limit).astype(np.float32)
 
 
-def _state_vec_speed_heading_goal(s_i: np.ndarray, ctx: Dict[str, Any]) -> tuple[float, float, np.ndarray]:
+def _state_vec_speed_heading_goal(s_i: np.ndarray, ctx: Dict[str, Any]) -> tuple[float, float, np.ndarray, float]:
     s_i = np.asarray(s_i, dtype=np.float32).reshape(-1)
     vel = s_i[2:4] if s_i.shape[0] >= 4 else np.zeros(2, dtype=np.float32)
     speed = float(np.linalg.norm(vel))
@@ -73,7 +72,8 @@ def _state_vec_speed_heading_goal(s_i: np.ndarray, ctx: Dict[str, Any]) -> tuple
     else:
         goal_rel = np.asarray(ctx.get("goal_relative", np.array([1.0, 0.0], dtype=np.float32)), dtype=np.float32).reshape(2)
     goal_dir = _unit(goal_rel)
-    return speed, heading, goal_dir
+    goal_dist = float(np.linalg.norm(goal_rel))
+    return speed, heading, goal_dir, goal_dist
 
 
 def _default_initiation(_: AgentState, __: Dict[str, Any]) -> bool:
@@ -94,7 +94,7 @@ def _decelerate_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
 
 def _goal_reached(state: AgentState, ctx: Dict[str, Any]) -> bool:
     dist_threshold = float(ctx.get("goal_threshold", 0.3))
-    speed_threshold = float(ctx.get("goal_speed_threshold", ctx.get("hover_speed_tol", 0.1)))
+    speed_threshold = float(ctx.get("goal_speed_threshold", 0.1))
     dist_ok = float(np.linalg.norm(state.goal - state.position)) <= dist_threshold
     speed_ok = _state_speed(state) <= speed_threshold
     return bool(dist_ok and speed_ok)
@@ -126,10 +126,6 @@ def _cruise_termination_set(state: AgentState, ctx: Dict[str, Any]) -> bool:
     return _goal_reached(state, ctx)
 
 
-def _hover_termination_set(state: AgentState, ctx: Dict[str, Any]) -> bool:
-    return _goal_reached(state, ctx)
-
-
 def _termination_with_timeout(
     state: AgentState,
     ctx: Dict[str, Any],
@@ -150,6 +146,8 @@ def _safety_constraints_common(_: AgentState, ctx: Dict[str, Any]) -> Dict[str, 
         "cbf_share_obs": float(ctx.get("cbf_share_obs", 1.0)),
         "cbf_eps": float(ctx.get("cbf_eps", 1e-4)),
         "use_input_bounds": bool(ctx.get("use_input_bounds", True)),
+        "slow_radius": float(ctx.get("slow_radius", 1.5)),
+        "goal_stop_min_speed": float(ctx.get("goal_stop_min_speed", 0.0)),
     }
 
 
@@ -158,6 +156,11 @@ def _turn_constraints(state: AgentState, ctx: Dict[str, Any]) -> Dict[str, Any]:
     out["turn_rate_weight"] = float(ctx.get("turn_rate_weight", 1.0))
     theta_des = float(ctx.get("target_heading", _state_heading(state)))
     vmag = float(ctx.get("turn_vmag", ctx.get("ref_speed", 0.8)))
+    slow_radius = float(ctx.get("slow_radius", 0.0))
+    if slow_radius > 0.0:
+        goal_dist = float(np.linalg.norm(state.goal - state.position))
+        speed_scale = float(np.clip(goal_dist / slow_radius, 0.0, 1.0))
+        vmag = max(float(ctx.get("goal_stop_min_speed", 0.0)), vmag * speed_scale)
     out["clf_v_des_vector"] = np.asarray(
         [vmag * np.cos(theta_des), vmag * np.sin(theta_des)],
         dtype=np.float32,
@@ -174,24 +177,18 @@ def _accelerate_constraints(state: AgentState, ctx: Dict[str, Any]) -> Dict[str,
 def _decelerate_constraints(state: AgentState, ctx: Dict[str, Any]) -> Dict[str, Any]:
     out = _safety_constraints_common(state, ctx)
     out["brake_bias"] = float(ctx.get("brake_bias", 1.0))
+    out["clf_v_des_speed"] = float(ctx.get("decelerate_clf_speed", 0.0))
     return out
 
 
 def _cruise_constraints(state: AgentState, ctx: Dict[str, Any]) -> Dict[str, Any]:
     out = _safety_constraints_common(state, ctx)
-    out["cruise_ref_speed"] = float(ctx.get("ref_speed", 0.8))
-    return out
-
-
-def _hover_constraints(state: AgentState, ctx: Dict[str, Any]) -> Dict[str, Any]:
-    out = _safety_constraints_common(state, ctx)
-    out["hover_mode"] = True
-    out["hover_speed_tol"] = float(ctx.get("hover_speed_tol", 0.1))
+    out["cruise_ref_speed"] = float(ctx.get("cruise_ref_speed", ctx.get("start_speed", ctx.get("ref_speed", 0.8))))
     return out
 
 
 def _intrinsic_reward_common(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]) -> float:
-    speed, heading, goal_dir = _state_vec_speed_heading_goal(s_i, ctx)
+    speed, heading, goal_dir, goal_dist = _state_vec_speed_heading_goal(s_i, ctx)
     a_i = np.asarray(a_i, dtype=np.float32).reshape(2)
     accel_pen = float(ctx.get("w_accel", 0.05)) * float(np.dot(a_i, a_i))
 
@@ -199,14 +196,20 @@ def _intrinsic_reward_common(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, An
     lateral = float(np.cross(np.append(heading_dir, 0.0), np.append(a_i, 0.0))[2])
     turn_pen = float(ctx.get("w_turn", 0.03)) * abs(lateral)
 
-    ref_speed = float(ctx.get("ref_speed", 0.8))
+    ref_speed = float(ctx.get("cruise_ref_speed", ctx.get("start_speed", ctx.get("ref_speed", 0.8))))
     speed_pen = float(ctx.get("w_speed_dev", 0.04)) * abs(speed - ref_speed)
 
     heading_ref = float(ctx.get("heading_ref", atan2(float(goal_dir[1]), float(goal_dir[0]))))
     heading_pen = float(ctx.get("w_heading_dev", 0.02)) * abs(_signed_angle_diff(heading, heading_ref))
 
     forward_progress = float(ctx.get("w_progress", 0.02)) * max(0.0, speed * float(np.dot(heading_dir, goal_dir)))
-    return float(forward_progress - accel_pen - turn_pen - speed_pen - heading_pen)
+    slow_radius = float(ctx.get("slow_radius", 0.0))
+    align_far_bonus = 0.0
+    if slow_radius > 0.0 and goal_dist > slow_radius:
+        vel_dir = heading_dir if speed > 1e-6 else goal_dir
+        align = max(0.0, float(np.dot(vel_dir, goal_dir)))
+        align_far_bonus = float(ctx.get("w_goal_align_far", 0.03)) * align
+    return float(forward_progress + align_far_bonus - accel_pen - turn_pen - speed_pen - heading_pen)
 
 
 def _turn_left_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
@@ -230,17 +233,28 @@ def _turn_right_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
 
 
 def _accelerate_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
+    vel = obs.self_state[2:4] if obs.self_state.shape[0] >= 4 else np.zeros(2, dtype=np.float32)
+    speed = float(np.linalg.norm(vel))
     goal_dir = _goal_dir_from_obs(obs)
-    gain = float(ctx.get("accelerate_gain", 0.8))
-    action = gain * goal_dir
+    vel_dir = _unit(vel) if speed > 1e-4 else goal_dir
+    heading_blend = float(ctx.get("accelerate_heading_blend", 0.0))
+    heading_blend = float(np.clip(heading_blend, 0.0, 1.0))
+    move_dir = _unit((1.0 - heading_blend) * goal_dir + heading_blend * vel_dir)
+    target_speed = float(max(ctx.get("target_speed", 1.2), float(ctx.get("start_speed", speed)) + float(ctx.get("accelerate_delta_speed", 0.4))))
+    kp = float(ctx.get("accelerate_speed_kp", 1.2))
+    action = kp * (target_speed - speed) * move_dir
     return _clip_action(action, ctx)
 
 
 def _decelerate_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
     vel = obs.self_state[2:4] if obs.self_state.shape[0] >= 4 else np.zeros(2, dtype=np.float32)
-    vel_dir = _unit(vel)
-    gain = float(ctx.get("decelerate_gain", 0.8))
-    action = -gain * vel_dir
+    speed = float(np.linalg.norm(vel))
+    stop_eps = float(ctx.get("decelerate_stop_eps", 0.05))
+    if speed <= stop_eps:
+        action = np.zeros(2, dtype=np.float32)
+    else:
+        kv = float(ctx.get("decelerate_kv", 1.5))
+        action = -kv * vel
     return _clip_action(action, ctx)
 
 
@@ -248,7 +262,7 @@ def _cruise_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
     vel = obs.self_state[2:4] if obs.self_state.shape[0] >= 4 else np.zeros(2, dtype=np.float32)
     speed = float(np.linalg.norm(vel))
     goal_dir = _goal_dir_from_obs(obs)
-    ref_speed = float(ctx.get("ref_speed", 0.8))
+    ref_speed = float(ctx.get("cruise_ref_speed", ctx.get("start_speed", ctx.get("ref_speed", speed))))
     kp = float(ctx.get("cruise_speed_kp", 0.8))
     k_align = float(ctx.get("cruise_align_kp", 0.3))
     accel_long = kp * (ref_speed - speed) * goal_dir
@@ -258,20 +272,6 @@ def _cruise_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
     return _clip_action(accel_long + align, ctx)
 
 
-def _hover_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
-    goal_rel = np.asarray(obs.goal_relative, dtype=np.float32).reshape(2)
-    vel = obs.self_state[2:4] if obs.self_state.shape[0] >= 4 else np.zeros(2, dtype=np.float32)
-    kp = float(ctx.get("hover_goal_kp", 1.2))
-    kd = float(ctx.get("hover_vel_kd", 1.0))
-    goal_tol = float(ctx.get("goal_threshold", 0.3))
-    dist = float(np.linalg.norm(goal_rel))
-    if dist <= goal_tol:
-        action = -kd * vel
-    else:
-        action = kp * goal_rel - kd * vel
-    return _clip_action(action, ctx)
-
-
 def _turn_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]) -> float:
     base = _intrinsic_reward_common(s_i, a_i, ctx)
     return float(base - float(ctx.get("w_turn_extra", 0.02)) * float(np.linalg.norm(a_i)))
@@ -279,14 +279,14 @@ def _turn_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]
 
 def _accelerate_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]) -> float:
     base = _intrinsic_reward_common(s_i, a_i, ctx)
-    speed, _, _ = _state_vec_speed_heading_goal(s_i, ctx)
+    speed, _, _, _ = _state_vec_speed_heading_goal(s_i, ctx)
     bonus = float(ctx.get("w_accel_target", 0.03)) * min(speed, float(ctx.get("target_speed", 1.2)))
     return float(base + bonus)
 
 
 def _decelerate_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]) -> float:
     base = _intrinsic_reward_common(s_i, a_i, ctx)
-    speed, _, _ = _state_vec_speed_heading_goal(s_i, ctx)
+    speed, _, _, _ = _state_vec_speed_heading_goal(s_i, ctx)
     target = float(ctx.get("decelerate_target_speed", 0.3))
     bonus = float(ctx.get("w_decel_target", 0.04)) * max(0.0, target - abs(speed - target))
     return float(base + bonus)
@@ -294,20 +294,10 @@ def _decelerate_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str
 
 def _cruise_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]) -> float:
     base = _intrinsic_reward_common(s_i, a_i, ctx)
-    speed, _, _ = _state_vec_speed_heading_goal(s_i, ctx)
-    ref = float(ctx.get("ref_speed", 0.8))
+    speed, _, _, _ = _state_vec_speed_heading_goal(s_i, ctx)
+    ref = float(ctx.get("cruise_ref_speed", ctx.get("start_speed", ctx.get("ref_speed", 0.8))))
     bonus = float(ctx.get("w_cruise_stable", 0.05)) * np.exp(-abs(speed - ref))
     return float(base + bonus)
-
-
-def _hover_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]) -> float:
-    base = _intrinsic_reward_common(s_i, a_i, ctx)
-    s_i = np.asarray(s_i, dtype=np.float32).reshape(-1)
-    vel = s_i[2:4] if s_i.shape[0] >= 4 else np.zeros(2, dtype=np.float32)
-    goal_rel = s_i[4:6] if s_i.shape[0] >= 6 else np.zeros(2, dtype=np.float32)
-    stop_bonus = float(ctx.get("w_hover_stop", 0.08)) * np.exp(-float(np.linalg.norm(vel)))
-    goal_bonus = float(ctx.get("w_hover_goal", 0.08)) * np.exp(-float(np.linalg.norm(goal_rel)))
-    return float(base + stop_bonus + goal_bonus)
 
 
 def build_default_skill_library(max_duration: int = 20) -> List[SkillSpec]:
@@ -366,17 +356,6 @@ def build_default_skill_library(max_duration: int = 20) -> List[SkillSpec]:
             safety_constraints_fn=_cruise_constraints,
             intrinsic_reward_fn=_cruise_intrinsic_reward,
             safe_skill_policy=_cruise_policy,
-        ),
-        SkillSpec(
-            skill_id=SKILL_HOVER,
-            name="hover",
-            initiation_set_fn=_default_initiation,
-            termination_set_fn=_hover_termination_set,
-            max_duration=max_duration,
-            termination_fn=lambda s, c, tau: _termination_with_timeout(s, c, tau, _hover_termination_set),
-            safety_constraints_fn=_hover_constraints,
-            intrinsic_reward_fn=_hover_intrinsic_reward,
-            safe_skill_policy=_hover_policy,
         ),
     ]
     return skills

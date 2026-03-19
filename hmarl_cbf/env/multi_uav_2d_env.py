@@ -47,6 +47,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         reward_reach_bonus: float = 1.0,
         reward_collision_penalty: float = 1.0,
         reward_oob_penalty: float = 1.0,
+        initial_speed_toward_goal: float = 0.0,
     ) -> None:
         if n_agents <= 0:
             raise ValueError("n_agents must be positive")
@@ -71,6 +72,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         self.reward_reach_bonus = float(reward_reach_bonus)
         self.reward_collision_penalty = float(reward_collision_penalty)
         self.reward_oob_penalty = float(reward_oob_penalty)
+        self.initial_speed_toward_goal = float(max(0.0, initial_speed_toward_goal))
         self.step_count = 0
         self._rng = np.random.default_rng()
 
@@ -142,7 +144,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
                     AgentState(
                         agent_id=i,
                         position=position,
-                        velocity=np.zeros(2, dtype=np.float32),
+                        velocity=self._initial_velocity(position=position, goal=goal),
                         goal=goal,
                         radius=self.agent_radius,
                     )
@@ -170,8 +172,11 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
                 )
                 continue
             position = np.asarray(item["position"], dtype=np.float32).reshape(2)
-            velocity = np.asarray(item.get("velocity", np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
             goal = np.asarray(item["goal"], dtype=np.float32).reshape(2)
+            if "velocity" in item:
+                velocity = np.asarray(item["velocity"], dtype=np.float32).reshape(2)
+            else:
+                velocity = self._initial_velocity(position=position, goal=goal)
             radius = float(item.get("radius", self.agent_radius))
             parsed.append(
                 AgentState(
@@ -183,6 +188,18 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
                 )
             )
         return parsed
+
+    def _initial_velocity(self, position: np.ndarray, goal: np.ndarray) -> np.ndarray:
+        speed = float(self.initial_speed_toward_goal)
+        if speed <= 0.0:
+            return np.zeros(2, dtype=np.float32)
+        vec = np.asarray(goal - position, dtype=np.float32).reshape(2)
+        dist = float(np.linalg.norm(vec))
+        if dist <= 1e-6:
+            return np.zeros(2, dtype=np.float32)
+        direction = vec / dist
+        v0 = direction * min(speed, self.velocity_limit)
+        return np.asarray(v0, dtype=np.float32).reshape(2)
 
     def _parse_obstacles_option(self, obstacles_option: Sequence[Dict[str, Any]]) -> List[Dict[str, np.ndarray | float]]:
         parsed: List[Dict[str, np.ndarray | float]] = []

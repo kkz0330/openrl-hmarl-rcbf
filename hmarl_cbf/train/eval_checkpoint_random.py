@@ -24,7 +24,7 @@ from hmarl_cbf.buffer import HierRolloutBuffer
 from hmarl_cbf.control import ConstraintBuilder, DifferentiableQPSolver, LowLevelSafeController, SyncCoordinator
 from hmarl_cbf.env import MultiUAV2DEnv
 from hmarl_cbf.policies import HighLevelPolicy, LowLevelQPPolicy
-from hmarl_cbf.skills import SKILL_HOVER, SkillRuntimeManager, build_default_skill_library
+from hmarl_cbf.skills import SkillRuntimeManager, build_default_skill_library
 from hmarl_cbf.train import TrainerSyncOnPolicy
 from hmarl_cbf.types import AgentObsHigh, AgentState
 
@@ -174,7 +174,7 @@ def _sample_high_skills(
     return {aid: int(z[idx]) for idx, aid in enumerate(agent_ids)}
 
 
-def _activate_round_with_hover_fallback(
+def _activate_round_skills(
     trainer: TrainerSyncOnPolicy,
     sampled_skills: Dict[int, int],
     states: Dict[int, AgentState],
@@ -199,7 +199,7 @@ def _evaluate_once(
 
     sampled = _sample_high_skills(trainer, obs, agent_ids, deterministic=deterministic)
     states0 = {s.agent_id: s for s in trainer.env.get_agent_states()}
-    active = _activate_round_with_hover_fallback(trainer, sampled, states0)
+    active = _activate_round_skills(trainer, sampled, states0)
 
     steps = 0
     terminated = False
@@ -236,7 +236,7 @@ def _evaluate_once(
         if (len(switched_agents) > 0) and not (terminated or truncated):
             sampled = _sample_high_skills(trainer, obs, agent_ids, deterministic=deterministic)
             states_round = {s.agent_id: s for s in trainer.env.get_agent_states()}
-            changed = _activate_round_with_hover_fallback(
+            changed = _activate_round_skills(
                 trainer,
                 {aid: int(sampled[aid]) for aid in switched_agents},
                 states_round,
