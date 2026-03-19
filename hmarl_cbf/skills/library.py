@@ -89,7 +89,11 @@ def _accelerate_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
 
 
 def _decelerate_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
-    return _state_speed(state) >= float(ctx.get("decelerate_init_min_speed", 0.2))
+    # Keep deceleration available down to the goal-speed threshold by default.
+    # This avoids a dead zone (e.g. [goal_speed_threshold, 0.2]) where the agent
+    # still needs braking but cannot initiate the decelerate skill.
+    default_min = float(ctx.get("goal_speed_threshold", 0.1))
+    return _state_speed(state) >= float(ctx.get("decelerate_init_min_speed", default_min))
 
 
 def _goal_reached(state: AgentState, ctx: Dict[str, Any]) -> bool:
@@ -155,12 +159,16 @@ def _turn_constraints(state: AgentState, ctx: Dict[str, Any]) -> Dict[str, Any]:
     out = _safety_constraints_common(state, ctx)
     out["turn_rate_weight"] = float(ctx.get("turn_rate_weight", 1.0))
     theta_des = float(ctx.get("target_heading", _state_heading(state)))
-    vmag = float(ctx.get("turn_vmag", ctx.get("ref_speed", 0.8)))
-    slow_radius = float(ctx.get("slow_radius", 0.0))
-    if slow_radius > 0.0:
-        goal_dist = float(np.linalg.norm(state.goal - state.position))
-        speed_scale = float(np.clip(goal_dist / slow_radius, 0.0, 1.0))
-        vmag = max(float(ctx.get("goal_stop_min_speed", 0.0)), vmag * speed_scale)
+    keep_speed = bool(ctx.get("turn_keep_speed", True))
+    if keep_speed:
+        vmag = float(ctx.get("turn_speed_ref", ctx.get("start_speed", _state_speed(state))))
+    else:
+        vmag = float(ctx.get("turn_vmag", ctx.get("ref_speed", 0.8)))
+        slow_radius = float(ctx.get("slow_radius", 0.0))
+        if slow_radius > 0.0:
+            goal_dist = float(np.linalg.norm(state.goal - state.position))
+            speed_scale = float(np.clip(goal_dist / slow_radius, 0.0, 1.0))
+            vmag = max(float(ctx.get("goal_stop_min_speed", 0.0)), vmag * speed_scale)
     out["clf_v_des_vector"] = np.asarray(
         [vmag * np.cos(theta_des), vmag * np.sin(theta_des)],
         dtype=np.float32,
@@ -210,7 +218,11 @@ def _intrinsic_reward_common(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, An
 def _turn_left_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
     vel = obs.self_state[2:4] if obs.self_state.shape[0] >= 4 else np.zeros(2, dtype=np.float32)
     theta_des = float(ctx.get("target_heading", atan2(float(vel[1]), float(vel[0]))))
-    vmag = float(ctx.get("turn_vmag", ctx.get("ref_speed", 0.8)))
+    keep_speed = bool(ctx.get("turn_keep_speed", True))
+    if keep_speed:
+        vmag = float(ctx.get("turn_speed_ref", ctx.get("start_speed", float(np.linalg.norm(vel)))))
+    else:
+        vmag = float(ctx.get("turn_vmag", ctx.get("ref_speed", 0.8)))
     v_des = np.asarray([vmag * np.cos(theta_des), vmag * np.sin(theta_des)], dtype=np.float32)
     turn_track_kp = float(ctx.get("turn_track_kp", 1.0))
     action = turn_track_kp * (v_des - vel)
@@ -220,7 +232,11 @@ def _turn_left_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
 def _turn_right_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
     vel = obs.self_state[2:4] if obs.self_state.shape[0] >= 4 else np.zeros(2, dtype=np.float32)
     theta_des = float(ctx.get("target_heading", atan2(float(vel[1]), float(vel[0]))))
-    vmag = float(ctx.get("turn_vmag", ctx.get("ref_speed", 0.8)))
+    keep_speed = bool(ctx.get("turn_keep_speed", True))
+    if keep_speed:
+        vmag = float(ctx.get("turn_speed_ref", ctx.get("start_speed", float(np.linalg.norm(vel)))))
+    else:
+        vmag = float(ctx.get("turn_vmag", ctx.get("ref_speed", 0.8)))
     v_des = np.asarray([vmag * np.cos(theta_des), vmag * np.sin(theta_des)], dtype=np.float32)
     turn_track_kp = float(ctx.get("turn_track_kp", 1.0))
     action = turn_track_kp * (v_des - vel)

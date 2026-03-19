@@ -29,7 +29,7 @@ env:
 
 synchronization:
   mode: sync
-  t_sync_max: 20
+  t_sync_max: 10
 
 safety:
   d_min_agent: 0.3
@@ -37,7 +37,7 @@ safety:
 
 skills:
   names: ["turn_left", "turn_right", "accelerate", "decelerate", "cruise"]
-  default_max_duration: 20
+  default_max_duration: 10
   params:
     goal_threshold: 0.3
     goal_speed_threshold: 0.1
@@ -45,9 +45,10 @@ skills:
     turn_min_speed: 0.2
     turn_target_angle: 0.6
     turn_heading_tol: 0.2
-    turn_vmag: 0.8
-    turn_track_kp: 1.0
-    target_speed: 1.2
+    turn_keep_speed: false
+    turn_vmag: 1.1
+    turn_track_kp: 2.0
+    target_speed: 1.4
     accelerate_mode: goal_tracking
     accelerate_heading_blend: 0.0
     decelerate_target_speed: 0.05
@@ -95,7 +96,6 @@ train:
   high_entropy_coef_start: 0.05
   high_entropy_coef_end: 0.01
   high_entropy_decay_iters: 700
-  high_diversity_coef: 0.03
   gamma_high: 0.99
   lam_high: 0.95
   gamma_low: 0.99

@@ -90,10 +90,12 @@ class SkillRuntimeManager:
             turn_angle = float(ctx.get("turn_target_angle", 0.6))
             ctx["target_heading"] = heading + turn_angle
             ctx["heading_ref"] = heading + turn_angle
+            ctx["turn_speed_ref"] = float(ctx.get("turn_speed_ref", start_speed))
         elif skill.skill_id == SKILL_TURN_RIGHT:
             turn_angle = float(ctx.get("turn_target_angle", 0.6))
             ctx["target_heading"] = heading - turn_angle
             ctx["heading_ref"] = heading - turn_angle
+            ctx["turn_speed_ref"] = float(ctx.get("turn_speed_ref", start_speed))
         else:
             ctx["heading_ref"] = heading
         if skill.name == "cruise":

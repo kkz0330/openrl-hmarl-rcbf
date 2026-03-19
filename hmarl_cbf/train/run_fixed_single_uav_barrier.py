@@ -265,7 +265,6 @@ def _build_trainer(
         low_ppo_max_grad_norm=float(cfg["train"].get("low_ppo_max_grad_norm", 0.5)),
         low_policy_action_std=float(cfg["train"].get("low_policy_action_std", 0.2)),
         low_normalize_advantages=bool(cfg["train"].get("low_normalize_advantages", True)),
-        high_diversity_coef=float(cfg["train"].get("high_diversity_coef", 0.03)),
         eval_episodes=int(eval_episodes),
         eval_deterministic=bool(deterministic_eval),
         eval_render=False,

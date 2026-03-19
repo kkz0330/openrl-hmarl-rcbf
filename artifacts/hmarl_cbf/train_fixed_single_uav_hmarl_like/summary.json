@@ -8,26 +8,26 @@
     "eval_collision_rate": 0.0,
     "eval_safe_reach_ratio": 0.0,
     "eval_min_h_agent": 0.0,
-    "eval_min_h_obstacle": 12.633333206176758,
-    "eval_avg_traj_length": 14.132946904748678,
-    "eval_avg_skill_switches": 12.0,
+    "eval_min_h_obstacle": 13.767463684082031,
+    "eval_avg_traj_length": 21.300187363289297,
+    "eval_avg_skill_switches": 13.0,
     "eval_qp_feasible_rate": 1.0,
     "eval_avg_steps": 200.0,
-    "eval_avg_episode_return": -0.7288168191909791
+    "eval_avg_episode_return": -2.8608154296875044
   },
   "last_eval_during_train": {
     "eval_n_episodes": 1.0,
     "eval_success_rate": 0.0,
     "eval_reach_rate": 0.0,
-    "eval_collision_rate": 0.0,
+    "eval_collision_rate": 1.0,
     "eval_safe_reach_ratio": 0.0,
     "eval_min_h_agent": 0.0,
-    "eval_min_h_obstacle": 11.39565658569336,
-    "eval_avg_traj_length": 15.132034286856651,
-    "eval_avg_skill_switches": 17.0,
+    "eval_min_h_obstacle": 13.767463684082031,
+    "eval_avg_traj_length": 10.488609335385263,
+    "eval_avg_skill_switches": 8.0,
     "eval_qp_feasible_rate": 1.0,
-    "eval_avg_steps": 200.0,
-    "eval_avg_episode_return": -1.7354515075683612
+    "eval_avg_steps": 98.0,
+    "eval_avg_episode_return": -7.8939773178100605
   },
   "run_dir": "artifacts/hmarl_cbf/train_fixed_single_uav_hmarl_like",
   "fixed_scene": {

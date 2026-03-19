@@ -61,6 +61,24 @@ def test_turn_left_reference_action_direction() -> None:
     assert np.isfinite(out.intrinsic_reward)
 
 
+def test_turn_keep_speed_uses_start_speed_for_clf_target() -> None:
+    skills = build_default_skill_library(max_duration=10)
+    mgr = SkillRuntimeManager(
+        skills,
+        default_ctx={
+            "turn_target_angle": 0.6,
+            "turn_keep_speed": True,
+            "action_limit": 2.0,
+        },
+    )
+    state = _make_state(position=[0.0, 0.0], velocity=[0.6, 0.8], goal=[5.0, 0.0], agent_id=0)  # speed=1.0
+    obs = _make_obs(state)
+    mgr.activate_skill(agent_id=0, skill_id=SKILL_TURN_LEFT, state=state)
+    target = mgr.control_target(agent_id=0, state=state, obs_low=obs)
+    v_des = np.asarray(target["safety_constraints"]["clf_v_des_vector"], dtype=np.float32).reshape(2)
+    assert abs(float(np.linalg.norm(v_des)) - 1.0) < 1e-4
+
+
 def test_turn_initiation_requires_min_speed() -> None:
     skills = build_default_skill_library(max_duration=10)
     mgr = SkillRuntimeManager(skills, default_ctx={"turn_min_speed": 0.3})

@@ -45,7 +45,6 @@ class TrainerHooks:
     low_policy_action_std: float = 0.20
     low_normalize_advantages: bool = True
     low_detach_value_head_in_actor: bool = True
-    high_diversity_coef: float = 0.03
     eval_episodes: int = 3
     eval_deterministic: bool = True
     eval_render: bool = False
@@ -596,13 +595,10 @@ class TrainerSyncOnPolicy:
         ep_return_ext = {aid: 0.0 for aid in agent_ids}
         round_return_ext = {aid: 0.0 for aid in agent_ids}
         round_discount = {aid: 1.0 for aid in agent_ids}
-        round_div_bonus = {aid: 0.0 for aid in agent_ids}
         done_by_agent = {aid: False for aid in agent_ids}
         reached_any = {aid: False for aid in agent_ids}
         unsafe_any = {aid: False for aid in agent_ids}
         skill_counts_rollout = {int(sid): 0 for sid in sorted(self.skill_runtime.skill_by_id.keys())}
-        div_bonus_events: List[float] = []
-        high_div_coef = float(self.hooks.high_diversity_coef)
         last_obs = obs
         terminated = False
         truncated = False
@@ -635,12 +631,7 @@ class TrainerSyncOnPolicy:
         )
         for aid in agent_ids:
             sid = int(actual[aid])
-            h_before = self._normalized_entropy_from_counts(skill_counts_rollout)
             skill_counts_rollout[sid] = int(skill_counts_rollout.get(sid, 0)) + 1
-            h_after = self._normalized_entropy_from_counts(skill_counts_rollout)
-            bonus = high_div_coef * (h_after - h_before)
-            round_div_bonus[aid] = float(bonus)
-            div_bonus_events.append(float(bonus))
         for aid in agent_ids:
             self.start_high_option(
                 k=int(self.coordinator.option_k[aid]),
@@ -759,13 +750,10 @@ class TrainerSyncOnPolicy:
                         self.close_high_option(
                             agent_id=aid,
                             t_end=t_end,
-                            return_ext=round_return_ext[aid] + round_div_bonus[aid],
+                            return_ext=round_return_ext[aid],
                             done=done_by_agent[aid],
                             sync_switch=True,
-                            info={
-                                "forced_sync": forced_end,
-                                "div_bonus": float(round_div_bonus[aid]),
-                            },
+                            info={"forced_sync": forced_end},
                         )
                 if forced_end:
                     break
@@ -779,12 +767,7 @@ class TrainerSyncOnPolicy:
                 )
                 for aid in switched_agents:
                     sid = int(actual[aid])
-                    h_before = self._normalized_entropy_from_counts(skill_counts_rollout)
                     skill_counts_rollout[sid] = int(skill_counts_rollout.get(sid, 0)) + 1
-                    h_after = self._normalized_entropy_from_counts(skill_counts_rollout)
-                    bonus = high_div_coef * (h_after - h_before)
-                    round_div_bonus[aid] = float(bonus)
-                    div_bonus_events.append(float(bonus))
                     self.start_high_option(
                         k=int(step_sync.option_k[aid]),
                         agent_id=aid,
@@ -802,13 +785,10 @@ class TrainerSyncOnPolicy:
                 self.close_high_option(
                     agent_id=aid,
                     t_end=self.coordinator.t,
-                    return_ext=round_return_ext[aid] + round_div_bonus[aid],
+                    return_ext=round_return_ext[aid],
                     done=done_by_agent[aid],
                     sync_switch=True,
-                    info={
-                        "cutoff_close": True,
-                        "div_bonus": float(round_div_bonus[aid]),
-                    },
+                    info={"cutoff_close": True},
                 )
 
         bootstrap: Dict[int, float] = {}
@@ -836,7 +816,6 @@ class TrainerSyncOnPolicy:
         top1_skill_ratio = float(
             max((int(v) for v in skill_counts_rollout.values()), default=0) / max(1, total_skill_activations)
         )
-        div_bonus_mean = float(sum(div_bonus_events) / max(1, len(div_bonus_events)))
         return {
             "steps_collected": float(steps_collected),
             "episode_return_mean": float(sum(ep_return_ext.values()) / max(1, len(agent_ids))),
@@ -845,7 +824,7 @@ class TrainerSyncOnPolicy:
             "low_samples": float(self.buffer.size_low()),
             "skill_entropy_norm": skill_entropy_norm,
             "top1_skill_ratio": top1_skill_ratio,
-            "high_div_bonus_mean": div_bonus_mean,
+            "high_div_bonus_mean": 0.0,
             **post,
         }
 
