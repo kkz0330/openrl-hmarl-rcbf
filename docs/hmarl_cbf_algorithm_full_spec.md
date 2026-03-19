@@ -1,487 +1,554 @@
-# HMARL-CBF 算法实现全说明（当前代码版）
+﻿# HMARL-CBF 算法实现完整说明（当前代码版）
 
-本文档对应当前仓库 `hmarl_cbf/` 的实现，统一说明：
-- 代码结构
-- 算法逻辑结构（上层/下层/环境/技能/同步协议）
-- 关键数学式子（动力学、奖励、MAPPO、QP/CBF/CLF、下层损失）
-- 默认配置与可切换项
-- 训练与评测入口
+本文档对应当前仓库 `hmarl_cbf/` 的实际实现（以代码为准，不是论文理想化伪代码）。
 
-## 1. 代码结构总览
+- 代码范围：`hmarl_cbf/`、`configs/hmarl_cbf/`
+- 训练入口：`hmarl_cbf/train/run_sync_onpolicy.py`、`hmarl_cbf/train/run_fixed_single_uav_barrier.py`
+- 评测入口：`hmarl_cbf/train/eval_checkpoint_random.py`
 
-主模块：`hmarl_cbf/`
+## 1. 总体目标与任务定义
 
-- `env/`
-  - `multi_uav_2d_env.py`: 2D 多智能体环境（双积分器、障碍、奖励、终止）
-  - `lidar.py`: LiDAR 扫描模型
-  - `observation.py`: 高层/低层观测拼装
-- `skills/`
-  - `library.py`: 技能定义（`turn_left/right`, `accelerate`, `decelerate`, `cruise`, `hover`）
-  - `runtime.py`: 技能运行时（激活、计时、终止、内在奖励）
-  - `termination.py`: 技能终止统一入口
-- `policies/`
-  - `high_level.py`: 上层离散技能策略 + value 网络
-  - `low_level_qp.py`: 下层 QP 参数网络 + 低层 value 头
-- `control/`
-  - `constraint_builder.py`: 构建硬 CBF + 软 CLF + 输入限幅约束
-  - `qp_solver.py`: 非可微 QP 求解（ECOS/SCS + fallback）
-  - `diff_qp.py`: 可微 QP（KKT 反传路径）
-  - `low_level_controller.py`: 下层控制链路（技能参考融合 + QP）
-  - `sync_coordinator.py`: sync/async 技能切换协调器
-- `high_level/`
-  - `mappo.py`: 上层 MAPPO 更新器
-- `buffer/`
-  - `hier_rollout_buffer.py`: 分层回放（步级低层 + 轮次级高层）
-- `train/`
-  - `trainer_sync_onpolicy.py`: 主训练器（rollout/update/eval）
-  - `run_sync_onpolicy.py`: 训练入口
-  - `eval_checkpoint_random.py`: 随机场景评测入口
-- `types.py`
-  - 数据结构定义（状态、观测、QP、transition 等）
+系统目标是：
+在 2D 平面多智能体场景中，完成目标到达任务，同时通过 CBF-QP 在每个时间步施加安全约束（避障、避碰、限幅）。
 
-配置目录：`configs/hmarl_cbf/`
-
-- `default_async_onpolicy_gcbfplus.yaml`（当前常用）
-- `default_sync_onpolicy.yaml`
-- `default_sync_onpolicy_gcbfplus.yaml`
-
-## 2. 任务与系统建模
-
-### 2.1 状态与控制
-
-每个智能体状态（2D 双积分器）：
+当前环境默认采用 2D 双积分器动力学：
 
 $$
-x_i = [p_x,\ p_y,\ v_x,\ v_y]
+\mathbf{x}_i = [p_x,p_y,v_x,v_y], \quad \mathbf{u}_i = [a_x,a_y]
 $$
 
-控制输入：
+离散更新（`env/multi_uav_2d_env.py`）：
 
 $$
-u_i = [a_x,\ a_y]
+\mathbf{v}_{t+1}=\mathrm{clip}(\mathbf{v}_t+\mathbf{u}_t\,dt, -v_{\max}, v_{\max})
+$$
+$$
+\mathbf{p}_{t+1}=\mathbf{p}_t+\mathbf{v}_{t+1}\,dt
 $$
 
-环境离散更新（见 `env/multi_uav_2d_env.py`）：
+动作先按 `action_limit` 做逐分量裁剪。
+
+---
+
+## 2. 代码结构与职责
+
+### 2.1 主目录结构
+
+- `hmarl_cbf/env/`
+  - `multi_uav_2d_env.py`：环境动力学、奖励、终止、碰撞/出界检测
+  - `lidar.py`：LiDAR 射线扫描
+  - `observation.py`：高层/低层观测构建
+- `hmarl_cbf/skills/`
+  - `library.py`：技能集合、技能策略、技能内在奖励、技能终止逻辑
+  - `runtime.py`：技能运行时管理（激活、tau、beta）
+  - `termination.py`：终止统一入口
+- `hmarl_cbf/policies/`
+  - `high_level.py`：离散技能策略 + value
+  - `low_level_qp.py`：低层网络，输出 QP 参数
+- `hmarl_cbf/control/`
+  - `low_level_controller.py`：技能参考与网络参考融合，构建并求解 QP
+  - `constraint_builder.py`：构造 CBF/CLF/输入约束
+  - `qp_solver.py`：推理期 QP 求解（ECOS/SCS/stub）
+  - `diff_qp.py`：训练期可微 QP（cvxpylayers）
+  - `sync_coordinator.py`：sync/async 技能切换协议
+- `hmarl_cbf/high_level/mappo.py`：上层 MAPPO 更新
+- `hmarl_cbf/buffer/hier_rollout_buffer.py`：分层缓存（low-step + high-option）
+- `hmarl_cbf/train/trainer_sync_onpolicy.py`：rollout、更新、评估主流程
+
+### 2.2 核心数据结构（`types.py`）
+
+- `AgentState`：位置、速度、目标、半径
+- `AgentObsHigh`、`AgentObsLow`：高层/低层观测
+- `SkillSpec`：技能 7 元组接口
+- `QPParam`：低层网络输出参数
+- `QPProblem`、`QPSolution`：QP 输入输出
+- `LowStepTransition`、`HighOptionTransition`：训练样本
+
+---
+
+## 3. 观测、感知与部分可观测建模
+
+### 3.1 高层观测 `obs_high`
+
+拼接形式：
 
 $$
-v_{t+1} = \mathrm{clip}(v_t + u_t\,dt,\ -v_{\max},\ v_{\max})
+[o_{self},\ o_{goal},\ o_{nbr}]
 $$
 
-$$
-p_{t+1} = p_t + v_{t+1}\,dt
-$$
+- `o_self = [p_x,p_y,v_x,v_y]`
+- `o_goal = goal - position`
+- `o_nbr`：最近邻摘要（最多 `max_neighbors`，每邻居 4 维：相对位置 2 + 相对速度 2）
 
-并对动作先做 `action_limit` 限幅。
+### 3.2 低层观测 `obs_low`
 
-### 2.2 终止条件
-
-单智能体到达条件：
+`obs_low.flat` 拼接：
 
 $$
-\|p - p_{\text{goal}}\| \le \text{goal\_threshold}
+[o_{self},\ o_{goal},\ lidar_{norm},\ o_{nbr}]
 $$
 
-且
+其中 `lidar_norm = lidar_ranges / lidar_max_range`，范围裁剪到 `[0,1]`。
+
+### 3.3 LiDAR（`lidar.py`）
+
+- 均匀角度 `N_beam` 条射线
+- 与圆形障碍、邻居圆盘求射线交点
+- 每束取最近距离，未命中返回 `max_range`
+- 可选高斯噪声 `noise_std`
+
+---
+
+## 4. 技能层：7 元组与当前技能库
+
+## 4.1 技能 7 元组（`SkillSpec`）
+
+每个技能包含：
+
+1. `initiation_set_fn`
+2. `termination_set_fn`
+3. `max_duration`
+4. `termination_fn(state, ctx, tau)`
+5. `safety_constraints_fn`
+6. `intrinsic_reward_fn`
+7. `safe_skill_policy`
+
+当前技能集合（无 HOVER）：
+
+- `turn_left`
+- `turn_right`
+- `accelerate`
+- `decelerate`
+- `cruise`
+
+## 4.2 运行时上下文与技能持续
+
+`SkillRuntimeManager` 在激活时记录：
+
+- `start_heading`
+- `start_speed`
+- `target_heading`（左右转）
+- `turn_speed_ref`（若保持速度）
+- `cruise_ref_speed`（巡航锁定激活时速度）
+
+终止规则统一为：
 
 $$
-\|v\| \le \text{goal\_speed\_threshold}
+\beta_i = \mathbf{1}\{\text{termination\_set}\ \lor\ \tau_i \ge \text{max\_duration}\}
 $$
 
-episode 终止：
-- 全体到达，或
-- `terminate_on_collision=true` 且任意不安全（碰撞或出界），或
-- 到达 `horizon`（truncated）。
+说明：`max_duration` 是固定超参数，实际时长会因 `termination_set` 提前结束而变化。
 
-## 3. 观测结构（部分可观测）
+## 4.3 当前技能策略实现要点（`skills/library.py`）
 
-每个智能体高层观测 `obs_high`：
-- `self_state = [p_x, p_y, v_x, v_y]`
-- `goal_relative = goal - position`
-- `neighbor_summary`（最多 `max_neighbors`，每个邻居 4 维：相对位置 2 + 相对速度 2）
+- `turn_left/right`
+  - 以目标航向 `target_heading` 构造期望速度方向
+  - 控制律：`u = k_p (v_des - v)`
+  - `turn_keep_speed=true` 时维持激活速度；否则使用 `turn_vmag`
+- `accelerate`
+  - `goal_tracking` 模式：朝目标方向做速度跟踪
+  - `hmarl_like` 模式：沿当前速度方向施加固定加速度步长 `accelerate_step`
+- `decelerate`
+  - `zero_track`：`u=-k_v v`
+  - `hmarl_like`：沿反速度方向施加固定减速 `decelerate_step`
+  - 当前已修正：默认 `decelerate_init_min_speed` 与 `goal_speed_threshold` 对齐，避免低速区无法触发减速
+- `cruise`
+  - 跟踪 `cruise_ref_speed`，并带少量横向对齐项
 
-每个智能体低层观测 `obs_low`：
-- `self_state`
-- `goal_relative`
-- `lidar_scan`（`N_beam` 束，归一化到 `[0,1]`）
-- `neighbor_summary`
+---
 
-LiDAR 模型（`env/lidar.py`）：
-- 每束做射线-圆障碍/邻居求交，取最近距离
-- 未命中返回 `max_range`
-- 可选高斯噪声：$\mathcal{N}(0,\sigma^2)$
+## 5. 切换协议：同步/异步高层技能执行
 
-## 4. 技能层（7 元组映射）
+`SyncCoordinator` 支持两种模式：
 
-实现技能：
-- `turn_left`, `turn_right`, `accelerate`, `decelerate`, `cruise`, `hover`
-
-`SkillSpec` 含 7 元组字段：
-- 启动集函数 `initiation_set_fn`
-- 中止集函数 `termination_set_fn`
-- 最大时长 `max_duration`
-- 中止函数 `termination_fn(state, ctx, tau)`
-- 安全集函数 `safety_constraints_fn`
-- 内在奖励函数 `intrinsic_reward_fn`
-- 安全技能策略（参考动作）`safe_skill_policy`
-
-技能终止逻辑：
+### 5.1 `mode=sync`
 
 $$
-\beta_i = \mathrm{termination\_fn}(\cdot)
+\text{sync\_switch} = \big(\forall i,\beta_i=1\big)\ \lor\ \big(\max_i \tau_i \ge T_{sync\_max}\big)
 $$
 
-通常实现为：
+触发后全体智能体一起切技能。
+
+### 5.2 `mode=async`
+
+智能体 $i$ 在以下任一条件成立时单独切换：
 
 $$
-(\text{in termination\_set})\ \lor\ (\tau \ge \text{max\_duration})
+\beta_i=1 \quad \text{or} \quad \tau_i \ge T_{sync\_max}
 $$
 
-## 5. 分层控制与执行协议
+未触发者继续执行当前技能。
 
-### 5.1 总体结构
+---
 
-每步链路：
-1. 上层（按轮次）给技能 `z_i`
-2. 下层网络输入 `(obs_low, z_i)` 输出 `QPParam`
-3. 技能策略输出 `u_ref_skill`
-4. 融合参考
-5. 构建 QP 约束（CBF/CLF/输入限幅）
-6. 求解 QP 得执行动作 `u`
+## 6. 上层策略：离散技能 MAPPO
 
-融合参考：
+### 6.1 策略网络（`policies/high_level.py`）
 
-$$
-u_{\text{ref}}^{\text{fused}}
-= w_{\text{skill}}u_{\text{ref}}^{\text{skill}}
-+ (1-w_{\text{skill}})u_{\text{ref}}^{\text{policy}}
-$$
+- Backbone：2 层 MLP(Tanh)
+- Actor head：输出技能 logits
+- Value head：输出状态值
+- 动作分布：`Categorical(logits)`
 
-### 5.2 sync/async 切换（`sync_coordinator.py`）
+### 6.2 上层 rollout 样本
 
-`mode=sync`：
+每次技能片段（option）记录：
 
-$$
-\text{sync\_switch}=\mathrm{all}(\beta_i)\ \lor\ \max(\tau_i)\ge T_{\text{sync\_max}}
-$$
+- `obs_high, skill_id, logp_old, value_old`
+- `return_ext`（该技能片段累计外在回报）
+- `advantage, value_target`（后处理）
 
-`mode=async`：
-- 智能体 $i$ 若 $\beta_i=1$ 或 $\tau_i\ge T_{\text{sync\_max}}$ 则单独切换技能
-- 未触发切换的智能体保持当前技能
+### 6.3 MAPPO 更新（`high_level/mappo.py`）
 
-## 6. 上层：MAPPO（离散技能）
-
-策略网络（`policies/high_level.py`）：
-- backbone: `MLP(Tanh)` -> `actor logits` + `value`
-- 动作为离散技能 id（Categorical）
-
-MAPPO 更新（`high_level/mappo.py`）：
+PPO 比率：
 
 $$
-r = \exp(\log p_{\text{new}}-\log p_{\text{old}})
+r_t = \exp(\log\pi_{new}(z_t|o_t)-\log\pi_{old}(z_t|o_t))
 $$
 
-$$
-L_{\text{actor}}
-= -\mathbb{E}\!\left[
-\min\!\left(rA,\ \mathrm{clip}(r,1-\epsilon,1+\epsilon)A\right)
-\right]
-$$
+Actor 损失：
 
 $$
-V_{\text{clip}} = V_{\text{old}} + \mathrm{clip}(V_{\text{new}}-V_{\text{old}},-\epsilon,\epsilon)
+L_{actor}=-\mathbb{E}[\min(r_tA_t,\ \mathrm{clip}(r_t,1-\epsilon,1+\epsilon)A_t)]
 $$
 
-$$
-L_{\text{value}}
-= \frac{1}{2}\,\mathbb{E}\!\left[
-\max\!\left((V_{\text{new}}-R)^2,\ (V_{\text{clip}}-R)^2\right)
-\right]
-$$
-
+Value clipping 与 PPO 一致，
 总损失：
 
 $$
-L_{\text{high}} = L_{\text{actor}} + c_v L_{\text{value}} - c_{\text{ent}}H
+L = L_{actor} + c_v L_{value} - c_e H
 $$
 
-高层样本来自高层 option 片段：
-`(obs_high, z, logp, value, return_ext, advantage, value_target)`。
+---
 
-## 7. 下层：参数化 QP + 可微求解
+## 7. 下层策略：参数化 QP + 安全过滤
 
-### 7.1 下层网络输出
+## 7.1 低层网络输出（`policies/low_level_qp.py`）
 
-`low_level_qp.py` 输出：
-- `u_ref`（2维）
-- `r_diag`（二次项对角，softplus 保正）
-- `w_clf`（CLF 松弛权重，softplus 保正）
-- `cbf_k0, cbf_k1`（CBF 增益，softplus 保正）
-- `clf_k`（CLF 增益，softplus 保正）
-- 低层 value 头：`low_value(obs_low, skill_id)`
+给定 `(obs_low, skill_id)` 输出：
 
-### 7.2 QP 标准型
+- `u_ref`：参考控制
+- `r_diag`：二次项对角（`softplus + clamp`，保证正）
+- `w_clf`：CLF 松弛权重（正）
+- `cbf_k0, cbf_k1`：CBF 增益（正）
+- `clf_k`：CLF 增益（正）
+- `low_value`：低层 value（PPO 模式使用）
 
-`constraint_builder.py` 构建：
+其中 `r_diag` 被限制在 `[1e-2, 50]`，保证 Hessian 严格正定。
 
-$$
-\min_{u,\delta}\ \frac{1}{2}u^\top \mathrm{diag}(r_{\text{diag}})u + f^\top u + w_{\text{clf}}\delta
-$$
+## 7.2 参考融合（`low_level_controller.py`）
 
-当
+技能策略给出 `u_ref_skill`，网络给出 `u_ref_policy`，融合为：
 
 $$
-f = -\mathrm{diag}(r_{\text{diag}})\,u_{\text{ref}}
+u_{ref}^{fused}=w_s\,u_{ref}^{skill}+(1-w_s)\,u_{ref}^{policy}
 $$
 
-时，目标等价于
+当前 `w_s=0.7`（代码固定于训练入口构建器）。
+
+## 7.3 QP 形式（`constraint_builder.py` + `qp_solver.py`）
+
+优化变量：动作 $u\in\mathbb{R}^2$ 与 CLF 松弛 $\delta\ge 0$。
+
+目标函数：
 
 $$
-\frac{1}{2}\|u-u_{\text{ref}}\|_R^2 + w_{\text{clf}}\delta
+\min_{u,\delta}\ \frac{1}{2}u^T\mathrm{diag}(r_{diag})u + f^Tu + w_{clf}\delta
+$$
+
+当前默认取
+
+$$
+f=-\mathrm{diag}(r_{diag})u_{ref}^{fused}
+$$
+
+等价于带权二范数跟踪：
+
+$$
+\frac{1}{2}\|u-u_{ref}^{fused}\|^2_{R}+w_{clf}\delta
 $$
 
 约束：
 
 $$
-A_{\text{cbf}}u \le b_{\text{cbf}}
+A_{cbf}u\le b_{cbf}
+$$
+$$
+A_{clf}u\le b_{clf}+\delta
+$$
+$$
+u_{min}\le u\le u_{max}
+$$
+$$
+\delta\ge 0
 $$
 
-$$
-A_{\text{clf}}u \le b_{\text{clf}} + \delta
-$$
+说明：CBF 为硬约束（无松弛），CLF 为软约束（有松弛）。
+
+## 7.4 CBF 具体模式
+
+由 `cbf_mode` 切换：
+
+### 7.4.1 `distributed_ecbf`
+
+对相对状态构造：
 
 $$
-u_{\min}\le u\le u_{\max}
+h = \|p_{rel}\|^2-d_{safe}^2,
+\quad \dot h = 2p_{rel}^Tv_{rel}
 $$
 
-$$
-\delta \ge 0
-$$
-
-### 7.3 CBF 形式（可切换）
-
-配置键：`cbf_mode`
-
-1) `distributed_ecbf`
+线性化后行约束形如：
 
 $$
-h = \|p_{\text{rel}}\|^2 - d_{\text{safe}}^2,\quad
-\dot h = 2p_{\text{rel}}^\top v_{\text{rel}},\quad
-\text{const}=2\|v_{\text{rel}}\|^2
+(-2p_{rel})u_i \le 2\|v_{rel}\|^2 + k_1\dot h + k_0 h
 $$
 
-线性行：
+### 7.4.2 `distributed_gcbfplus`（当前常用）
 
 $$
-A=-2p_{\text{rel}},\quad b=\text{const}+k_1\dot h+k_0 h
+h_0=\|p_{rel}\|^2-d_{safe}^2,
+\quad \dot h_0=2p_{rel}^Tv_{rel}
+$$
+$$
+h_1=\dot h_0+\alpha_0 h_0,
+\quad \alpha_0=k_0,
+\quad \alpha_1=k_1
 $$
 
-2) `distributed_gcbfplus`
+约束形式：
 
 $$
-h_0=\|p_{\text{rel}}\|^2-d_{\text{safe}}^2,\quad
-\dot h_0=2p_{\text{rel}}^\top v_{\text{rel}}
+-L_gh_1\,u_i \le \rho\,(L_fh_1+\alpha_1 h_1)
 $$
 
-$$
-h_1=\dot h_0+\alpha_0h_0,\ \alpha_0=k_0
-$$
+其中 `\rho` 为责任分配系数：
+
+- 邻居约束：`cbf_share_agent`（默认 0.5）
+- 障碍约束：`cbf_share_obs`（默认 1.0）
+
+### 7.4.3 `distributed_hocbf54`
+
+采用 GCBF+ 论文（54）式风格的 reciprocal barrier：
 
 $$
-L_f(h_1)=2\|v_{\text{rel}}\|^2 + 2\alpha_0(p_{\text{rel}}^\top v_{\text{rel}})
+h = \sqrt{4u_{max}(\|p_{rel}\|-d_{safe})} + \frac{p_{rel}^T}{\|p_{rel}\|}v_{rel}
 $$
 
-责任分配约束：
+并转成单步线性不等式。
+
+## 7.5 CLF 形式
+
+默认速度跟踪型 CLF：
 
 $$
-A=-2p_{\text{rel}},\quad
-b=\text{share}\,\big(L_f(h_1)+\alpha_1 h_1\big),\ \alpha_1=k_1
+V = \frac{1}{2}\|v-v_{des}\|^2
+$$
+$$
+A_{clf}= (v-v_{des})^T,
+\quad b_{clf}=-k_{clf}V
 $$
 
-3) `distributed_hocbf54`
+`v_des` 来源：
+
+- 若技能覆盖中显式给了 `clf_v_des_vector`，直接使用
+- 否则按 `target_speed/cruise_ref_speed/decelerate_target_speed/ref_speed` 回退生成 `v_des = speed_ref * goal_dir`
+- 若设置 `slow_radius>0`，近目标时速度目标按距离缩放，利于停稳
+
+---
+
+## 8. 训练流程（on-policy）
+
+主循环（`TrainerSyncOnPolicy`）：
+
+1. `collect_rollout()`
+2. `update_low_level()`
+3. `update_high_level()`
+
+### 8.1 rollout 期间发生什么
+
+- 上层按当前 `obs_high` 采样技能
+- 技能运行时输出 `u_ref_skill` 与 `safety_constraints`
+- 低层网络输出 QP 参数
+- 经过安全控制器求得执行动作
+- 环境推进一步，记录外在奖励 + 内在奖励
+- 根据 `beta` 与同步协议切技能
+
+### 8.2 分层回报后处理
+
+- 高层：`compute_high_advantages(gamma_high, lam_high)`（GAE）
+- 低层：`compute_low_returns(gamma_low, ext_reward_coef)`
+
+低层回报定义：
 
 $$
-h = \sqrt{4u_{\max}(\|p_{\text{rel}}\|-d_{\text{safe}})} + n^\top v_{\text{rel}},
-\quad
-n=\frac{p_{\text{rel}}}{\|p_{\text{rel}}\|}
+r_{low}=r_{int}+\lambda_{ext} r_{ext}
 $$
 
-对应线性行 $Au\le b$ 由 `_build_hocbf54_row` / `_build_hocbf54_row_torch` 实现。
+其中 `\lambda_{ext} = low_ext_reward_coef`。
 
-### 7.4 CLF 形式
+### 8.3 低层两种更新模式
 
-期望速度：
+- `target_regression`
+  - 用可微 QP 反传
+  - 损失：
+    $$L=\frac12\|u_{qp}-u_{target}\|^2$$
+- `onpolicy_ppo`
+  - 用高斯策略在 QP 均值动作附近采样
+  - 标准 PPO actor-critic 损失更新低层网络
 
-$$
-v_{\text{des}}=
-\begin{cases}
-\text{clf\_v\_des\_vector}, & \text{技能提供该向量}\\
-s_{\text{ref}}\cdot \text{goal\_dir}, & \text{否则}
-\end{cases}
-$$
+---
 
-$$
-V=\frac{1}{2}\|v-v_{\text{des}}\|^2,\quad
-A_{\text{clf}}=(v-v_{\text{des}})^\top,\quad
-b_{\text{clf}}=-k_{\text{clf}}V
-$$
+## 9. 奖励、成本与日志指标
 
-CLF 在 QP 中通过松弛变量 $\delta$ 软化。
-
-### 7.5 求解器策略
-
-推理 QP（`qp_solver.py`）：
-- 先 ECOS
-- 失败则 SCS
-- 再失败用 deterministic stub（按目标项闭式 + 限幅）
-
-可微 QP（`diff_qp.py`）用于训练反传：
-- 同样 ECOS -> SCS -> 张量 fallback
-- 保留 `r_diag / w_clf / cbf_k* / clf_k / u_ref` 的梯度路径
-
-## 8. 下层训练模式（可切换）
-
-配置键：`train.low_update_mode`
-
-### 8.1 `target_regression`
+## 9.1 环境外在奖励（`multi_uav_2d_env.py`）
 
 $$
-L_{\text{low}}=\frac{1}{2}\|u_{\text{qp}}-u_{\text{target}}\|^2
+progress = d_{prev}-d_{curr}
+$$
+$$
+r_{ext}=w_p\cdot progress - w_t
++\mathbb{1}_{reach}b_{reach}
+-\mathbb{1}_{coll}p_{coll}
+-\mathbb{1}_{oob}p_{oob}
 $$
 
-$$
-u_{\text{target}} = u_{\text{exec}} + \text{scale}\cdot\text{advantage}\cdot\text{goal\_dir}
-$$
-
-并可裁剪到输入边界。
-
-### 8.2 `onpolicy_ppo`
-
-rollout 时：
-- 先计算 QP 均值动作 $\mu$
-- 采样动作：$a_{\text{sample}}=\mu+\epsilon,\ \epsilon\sim\mathcal{N}(0,\sigma^2)$
-- 记录 `logp_old` 与 `value_old`
-
-更新时：
+到达判定为双条件：
 
 $$
-r=\exp(\log p_{\text{new}}-\log p_{\text{old}})
+\|p-goal\| \le goal\_threshold
+\quad \land \quad
+\|v\| \le goal\_speed\_threshold
 $$
 
-$$
-L_{\text{actor}}=-\min\!\left(rA,\ \mathrm{clip}(r,1-\epsilon,1+\epsilon)A\right)
-$$
+## 9.2 技能内在奖励（`skills/library.py`）
 
-$$
-L_{\text{value}}=\frac{1}{2}(V-R)^2
-$$
+共有项：
 
-$$
-L_{\text{low}}=L_{\text{actor}}+c_vL_{\text{value}}-c_{\text{ent}}H
-$$
-
-默认低层回报以内在奖励为主（`low_ext_reward_coef=0.0`）：
-
-$$
-\text{low\_return}=r_{\text{int}}+\text{coef}\cdot r_{\text{ext}}
-$$
-
-## 9. 奖励、成本与指标
-
-### 9.1 环境外在奖励 `reward_ext`
-
-$$
-\text{progress}=d_{\text{prev}}-d_{\text{curr}}
-$$
-
-$$
-r=w_{\text{progress}}\cdot\text{progress}-w_{\text{time}}
-$$
-
-到达加 `reach_bonus`，碰撞减 `collision_penalty`，出界减 `oob_penalty`。
-
-### 9.2 内在奖励 `reward_int`
-
-在 `skills/library.py` 中定义，共性项包括：
 - 加速度惩罚
 - 转向惩罚
 - 速度偏差惩罚
 - 航向偏差惩罚
-- 小权重前进奖励
+- 前进进度奖励
+- 目标距离惩罚
 
-各技能再附加对应 bonus/penalty（如 `hover` 的静止与贴近目标奖励）。
+各技能再叠加 skill-specific bonus/penalty（如加速目标速度 bonus、减速目标速度 bonus、巡航稳定 bonus）。
 
-### 9.3 安全成本
+## 9.3 成本与安全
 
-$$
-c_i=\mathbf{1}\{\text{collision or out-of-bounds}\}
-$$
+- `cost_i = 1` 当步不安全（碰撞或出界），否则 0
+- rollout 统计 `safe_reach_ratio`
+- eval 统计 `success_rate / reach_rate / collision_rate / qp_feasible_rate` 等
 
-在 `env.info["costs"]` 输出。
+## 9.4 收敛辅助日志
 
-### 9.4 常用日志
+训练脚本里额外输出：
 
-- `episode_return_mean`（外在回报均值）
-- `safe_reach_ratio`
-- `eval_success_rate`, `eval_collision_rate`, `eval_reach_rate`
-- `eval_qp_feasible_rate`
-- `loss_high_*`, `loss_low_*`
+- `skill_entropy_norm`
+- `top1_skill_ratio`
+- `conv_eval_success_delta_w5`
 
-## 10. 默认配置（`default_async_onpolicy_gcbfplus.yaml`）
+其中 `conv_eval_success_delta_w5` 是最近两段各 5 次 eval 成功率均值差的绝对值。
 
-关键默认值：
-- 环境：`n_agents=4`, `n_obstacles=3`, `dt=0.1`, `horizon=200`
-- 限幅：`action_limit=2.0`, `velocity_limit=2.0`
-- 感知：`lidar_beams=32`, `lidar_range=4.5`, `neighbor_radius=3.0`
-- 协议：`mode=async`, `t_sync_max=20`
-- 安全：`d_min_agent=0.6`, `d_safe_obs=0.6`
-- 技能：`ref_speed=1.2`, `decelerate_target_speed=0.3`
-- CBF：`cbf_mode=distributed_gcbfplus`, `cbf_share_agent=0.5`, `cbf_share_obs=1.0`
-- 约束：`use_input_bounds=true`
-- 训练：`rollout_steps=200`, `eval_interval=10`
-- 折扣：`gamma_high=0.99`, `lam_high=0.95`, `gamma_low=0.99`
-- 下层：`low_update_mode=target_regression`（可切到 `onpolicy_ppo`）
+---
 
-## 11. 训练与评测入口
+## 10. 当前默认配置（重点）
 
-### 11.1 训练
+### 10.1 通用异步配置
 
-入口：`python -m hmarl_cbf.train.run_sync_onpolicy`
+文件：`configs/hmarl_cbf/default_async_onpolicy_gcbfplus.yaml`
 
-示例（异步 + GCBF + 下层 PPO）：
+关键值：
+
+- `mode=async`
+- `t_sync_max=10`
+- `default_max_duration=10`
+- `cbf_mode=distributed_gcbfplus`
+- `d_min_agent=0.3`, `d_safe_obs=0.3`
+- `action_limit=2.0`, `velocity_limit=2.0`
+
+### 10.2 你当前常用 hmarl_like 配置
+
+文件：`configs/hmarl_cbf/default_async_onpolicy_gcbfplus_hmarl_like.yaml`
+
+当前关键值（以文件现状为准）：
+
+- 环境：`dt=0.1`, `horizon=200`, `neighbor_radius=2.0`, `lidar_range=3.0`
+- 到达判定：`goal_threshold=0.3`, `goal_speed_threshold=0.1`
+- 协议：`mode=async`, `t_sync_max=10`, `default_max_duration=10`
+- 技能：
+  - `turn_keep_speed=false`
+  - `turn_vmag=1.1`, `turn_track_kp=2.0`, `turn_target_angle=0.6`
+  - `accelerate_mode=hmarl_like`, `accelerate_step=1.0`
+  - `decelerate_mode=hmarl_like`, `decelerate_step=1.6`
+  - `decelerate_init_min_speed=0.1`, `decelerate_target_speed=0.05`
+  - `slow_radius=2.0`
+- 奖励：`reward_progress_weight=0.3`, `w_goal_dist_pen=0.12`
+- 低层训练：`low_ext_reward_coef=0.2`, `low_update_mode=target_regression`
+
+---
+
+## 11. 训练、评测与产物
+
+## 11.1 多智能体训练
+
+```bash
+python -m hmarl_cbf.train.run_sync_onpolicy \
+  --config configs/hmarl_cbf/default_async_onpolicy_gcbfplus.yaml \
+  --run-name train_async_default
+```
+
+切到低层 PPO：
 
 ```bash
 python -m hmarl_cbf.train.run_sync_onpolicy \
   --config configs/hmarl_cbf/default_async_onpolicy_gcbfplus.yaml \
   --low-update-mode onpolicy_ppo \
-  --run-name train_async_lowppo_gcbfplus
+  --run-name train_async_lowppo
 ```
 
-### 11.2 评测
+## 11.2 单机场景训练（固定障碍穿越）
 
-入口：`python -m hmarl_cbf.train.eval_checkpoint_random`
+```bash
+python -m hmarl_cbf.train.run_fixed_single_uav_barrier \
+  --config configs/hmarl_cbf/default_async_onpolicy_gcbfplus_hmarl_like.yaml \
+  --run-name single_uav_current \
+  --total-iterations 500 \
+  --eval-interval 10 \
+  --video-interval 20 \
+  --init-speed-to-goal 0.4
+```
+
+## 11.3 随机场景评测已训模型
 
 ```bash
 python -m hmarl_cbf.train.eval_checkpoint_random \
   --checkpoint artifacts/hmarl_cbf/<run>/checkpoints/last.pt \
   --episodes 100 \
   --seconds 30 \
-  --deterministic \
-  --run-name eval_100x30s
+  --deterministic
 ```
 
-输出：
-- `episode_results.csv`
+## 11.4 主要输出文件
+
+- `train_history.csv`
 - `summary.json`
+- `checkpoints/last.pt`
+- `eval_media/*.gif|png`
+- 单机脚本还会输出：`high_skill_sequence_per_iter.csv`
 
-## 12. 实现注意事项
+---
 
-1. 世界单位是仿真单位（数值尺度），默认不显式绑定真实米制。
-2. 邻居/障碍 CBF 采用“感知到才加约束”：
-   - 邻居由 `neighbor_radius` 过滤。
-   - 障碍由 `lidar_range`（表面距离）过滤。
-3. 当前版本 QP 不可解时不会强制“减速 fallback”；推理求解器走内部 fallback。
-4. 上层回报用外在奖励聚合；下层回报默认以内在奖励为主（`low_ext_reward_coef=0.0`）。
+## 12. 重要实现细节与边界说明
+
+1. CBF 仍为硬约束，不加松弛；CLF 使用松弛变量。
+2. 推理期 QP 求解失败时，`qp_solver.py` 会 fallback 到确定性 `stub_clipped`，这会影响动作真实性能但保证流程不断。
+3. 低层可微 QP 在训练反传时也有 ECOS->SCS->张量 fallback，若可行域长期冲突，仍可能出现训练不稳定。
+4. 上层当前无额外 diversity bonus；技能多样性主要靠熵项与任务回报驱动。
+5. 单位是仿真数值单位（通常可按米/秒理解），但代码未强制绑定物理单位系统。
+
+---
 
 ## 13. 一句话总结
 
-当前实现是可切换 sync/async 的分层多智能体安全控制框架：上层 MAPPO 学技能切换，下层网络学习 QP 参数并通过 CBF/CLF-QP 逐步生成安全动作，支持 GCBF+ 风格分布式手工 CBF 与下层 on-policy PPO 路径。
+当前实现是一个“上层离散技能 MAPPO + 下层参数化 CBF/CLF-QP 安全控制”的分层多智能体框架，支持 sync/async 技能切换、GCBF+ 风格分布式 CBF、LiDAR 部分可观测输入，以及 target-regression 与 low-level PPO 两种下层更新路径。

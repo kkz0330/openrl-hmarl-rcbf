@@ -47,6 +47,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--low-ppo-epochs", type=int, default=-1, help="Override low-level PPO epochs.")
     parser.add_argument("--low-policy-action-std", type=float, default=-1.0, help="Override low-level action std.")
     parser.add_argument("--eval-episodes", type=int, default=1, help="Periodic evaluation episodes during training.")
+    parser.add_argument(
+        "--video-interval",
+        type=int,
+        default=0,
+        help="If >0, render periodic evaluation GIFs every N iterations during training.",
+    )
     parser.add_argument("--final-eval-episodes", type=int, default=3, help="Final evaluation episodes with rendering.")
     parser.add_argument("--final-render-gif", action="store_true", help="Render final evaluation as GIF files.")
     parser.add_argument("--final-render-png", action="store_true", help="Render final evaluation as PNG files.")
@@ -222,6 +228,7 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
     skill_params = dict(cfg["skills"]["params"])
     skill_params["action_limit"] = action_limit
     skill_params["cbf_u_max"] = action_limit
+    skill_params["dt"] = float(cfg["env"]["dt"])
     runtime = SkillRuntimeManager(
         skills,
         default_ctx=skill_params,
@@ -338,6 +345,7 @@ def main() -> None:
     eval_success_history: list[float] = []
     total_iterations = int(cfg["train"]["total_iterations"])
     eval_interval = max(1, int(cfg["train"]["eval_interval"]))
+    video_interval = max(0, int(args.video_interval))
 
     for itr in range(1, total_iterations + 1):
         high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
@@ -362,8 +370,24 @@ def main() -> None:
             "loss_low_value": float(low.get("loss_value", 0.0)),
             "low_entropy": float(low.get("entropy", 0.0)),
         }
-        if itr == 1 or itr % eval_interval == 0 or itr == total_iterations:
+        should_eval = bool(itr == 1 or itr % eval_interval == 0 or itr == total_iterations)
+        should_video = bool(video_interval > 0 and (itr % video_interval == 0))
+
+        if should_eval:
+            prev_render = bool(trainer.hooks.eval_render)
+            prev_render_gif = bool(trainer.hooks.eval_render_gif)
+            prev_render_dir = str(trainer.hooks.eval_render_dir)
+            if should_video:
+                trainer.hooks.eval_render = True
+                trainer.hooks.eval_render_gif = True
+                trainer.hooks.eval_render_dir = str(run_dir / "eval_media" / f"iter_{itr:04d}")
+
             last_eval = trainer.evaluate()
+
+            trainer.hooks.eval_render = prev_render
+            trainer.hooks.eval_render_gif = prev_render_gif
+            trainer.hooks.eval_render_dir = prev_render_dir
+
             row.update({k: float(v) for k, v in last_eval.items()})
             eval_success_history.append(float(last_eval.get("eval_success_rate", 0.0)))
             if len(eval_success_history) >= 10:
@@ -380,6 +404,20 @@ def main() -> None:
                 f"coll={float(last_eval.get('eval_collision_rate', 0.0)):.4f} "
                 f"conv={row['conv_eval_success_delta_w5']:.4f}"
             )
+            if should_video:
+                print(f"[iter {itr}/{total_iterations}] periodic_media_dir={run_dir / 'eval_media' / f'iter_{itr:04d}'}")
+        elif should_video:
+            prev_render = bool(trainer.hooks.eval_render)
+            prev_render_gif = bool(trainer.hooks.eval_render_gif)
+            prev_render_dir = str(trainer.hooks.eval_render_dir)
+            trainer.hooks.eval_render = True
+            trainer.hooks.eval_render_gif = True
+            trainer.hooks.eval_render_dir = str(run_dir / "eval_media" / f"iter_{itr:04d}")
+            _ = trainer.evaluate()
+            trainer.hooks.eval_render = prev_render
+            trainer.hooks.eval_render_gif = prev_render_gif
+            trainer.hooks.eval_render_dir = prev_render_dir
+            print(f"[iter {itr}/{total_iterations}] periodic_media_dir={run_dir / 'eval_media' / f'iter_{itr:04d}'}")
         history.append(row)
 
     trainer.hooks.eval_episodes = max(1, int(args.final_eval_episodes))

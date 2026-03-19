@@ -238,6 +238,7 @@ def _build_trainer(
     skill_params = dict(cfg["skills"]["params"])
     skill_params["action_limit"] = action_limit
     skill_params["cbf_u_max"] = action_limit
+    skill_params["dt"] = float(cfg["env"]["dt"])
     runtime = SkillRuntimeManager(skills, default_ctx=skill_params)
     low_controller = LowLevelSafeController(
         low_policy=low_policy,

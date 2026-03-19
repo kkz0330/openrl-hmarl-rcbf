@@ -89,11 +89,8 @@ def _accelerate_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
 
 
 def _decelerate_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
-    # Keep deceleration available down to the goal-speed threshold by default.
-    # This avoids a dead zone (e.g. [goal_speed_threshold, 0.2]) where the agent
-    # still needs braking but cannot initiate the decelerate skill.
-    default_min = float(ctx.get("goal_speed_threshold", 0.1))
-    return _state_speed(state) >= float(ctx.get("decelerate_init_min_speed", default_min))
+    # Deceleration is allowed at any speed by default.
+    return _state_speed(state) >= float(ctx.get("decelerate_init_min_speed", 0.0))
 
 
 def _goal_reached(state: AgentState, ctx: Dict[str, Any]) -> bool:
@@ -123,7 +120,15 @@ def _accelerate_termination_set(state: AgentState, ctx: Dict[str, Any]) -> bool:
 def _decelerate_termination_set(state: AgentState, ctx: Dict[str, Any]) -> bool:
     if _goal_reached(state, ctx):
         return True
-    return _state_speed(state) <= float(ctx.get("decelerate_target_speed", 0.3))
+    speed = _state_speed(state)
+    mode = str(ctx.get("decelerate_mode", "zero_track")).strip().lower()
+    if mode in {"hmarl_like", "along_velocity", "velocity_decrement"}:
+        delta_speed = float(max(ctx.get("decelerate_delta_speed", 0.2), 0.0))
+        start_speed = float(ctx.get("start_speed", speed))
+        target_speed = max(0.0, start_speed - delta_speed)
+        tol = float(ctx.get("decelerate_stop_eps", 0.05))
+        return speed <= (target_speed + tol)
+    return speed <= float(ctx.get("decelerate_target_speed", 0.3))
 
 
 def _cruise_termination_set(state: AgentState, ctx: Dict[str, Any]) -> bool:
@@ -277,8 +282,20 @@ def _decelerate_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
 
     mode = str(ctx.get("decelerate_mode", "zero_track")).strip().lower()
     if mode in {"hmarl_like", "along_velocity", "velocity_decrement"}:
-        decel_step = float(ctx.get("decelerate_step", ctx.get("decelerate_gain", 0.8)))
-        action = -decel_step * _unit(vel)
+        delta_speed = float(max(ctx.get("decelerate_delta_speed", 0.2), 0.0))
+        dv = min(delta_speed, speed)
+        if speed <= 1e-6 or dv <= 0.0:
+            action = np.zeros(2, dtype=np.float32)
+        else:
+            dt = float(ctx.get("dt", 0.0))
+            decel_dir = _unit(vel)
+            if dt > 1e-8:
+                # Enforce speed decrement semantics:
+                # target speed = max(0, speed - delta_speed) in one environment step.
+                action = -(dv / dt) * decel_dir
+            else:
+                decel_step = float(ctx.get("decelerate_step", ctx.get("decelerate_gain", 0.8)))
+                action = -decel_step * decel_dir
     else:
         kv = float(ctx.get("decelerate_kv", 1.5))
         action = -kv * vel
@@ -314,8 +331,14 @@ def _accelerate_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str
 def _decelerate_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]) -> float:
     base = _intrinsic_reward_common(s_i, a_i, ctx)
     speed, _, _, _ = _state_vec_speed_heading_goal(s_i, ctx)
-    target = float(ctx.get("decelerate_target_speed", 0.3))
-    bonus = float(ctx.get("w_decel_target", 0.04)) * max(0.0, target - abs(speed - target))
+    mode = str(ctx.get("decelerate_mode", "zero_track")).strip().lower()
+    if mode in {"hmarl_like", "along_velocity", "velocity_decrement"}:
+        delta_speed = float(max(ctx.get("decelerate_delta_speed", 0.2), 0.0))
+        start_speed = float(ctx.get("start_speed", speed))
+        target = max(0.0, start_speed - delta_speed)
+    else:
+        target = float(ctx.get("decelerate_target_speed", 0.3))
+    bonus = float(ctx.get("w_decel_target", 0.04)) * float(np.exp(-abs(speed - target)))
     return float(base + bonus)
 
 

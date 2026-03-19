@@ -52,13 +52,13 @@ skills:
     target_speed: 1.4
     accelerate_mode: hmarl_like
     accelerate_heading_blend: 0.0
-    decelerate_target_speed: 0.05
-    decelerate_init_min_speed: 0.1
+    decelerate_delta_speed: 0.2
+    decelerate_init_min_speed: 0.0
     decelerate_mode: hmarl_like
     decelerate_stop_eps: 0.05
     decelerate_kv: 1.5
     ref_speed: 1.2
-    slow_radius: 2.0
+    slow_radius: 0.5
     goal_stop_min_speed: 0.0
     d_min_agent: 0.3
     d_safe_obs: 0.3
@@ -74,7 +74,7 @@ skills:
     w_accel_target: 0.01
     w_goal_dist_pen: 0.12
     accelerate_step: 1.0
-    decelerate_step: 1.6
+    decelerate_step: 2.0
 model:
   high_hidden_dim: 128
   low_hidden_dim: 128
