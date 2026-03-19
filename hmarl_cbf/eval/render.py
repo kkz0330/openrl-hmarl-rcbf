@@ -21,6 +21,7 @@ class EpisodeTrace:
     goals: np.ndarray  # shape [N, 2]
     obstacles: List[Dict[str, np.ndarray | float]]
     unsafe_flags: np.ndarray | None = None  # shape [T, N] (optional)
+    frame_labels: List[str] | None = None  # optional text label for each frame
 
 
 class TrajectoryRenderer:
@@ -78,8 +79,11 @@ class TrajectoryRenderer:
         pos = np.asarray(trace.positions, dtype=np.float32)
         goals = np.asarray(trace.goals, dtype=np.float32)
         unsafe = None if trace.unsafe_flags is None else np.asarray(trace.unsafe_flags, dtype=bool)
+        frame_labels = list(trace.frame_labels) if trace.frame_labels is not None else None
         t, n, _ = pos.shape
         assert goals.shape == (n, 2)
+        if frame_labels is not None and len(frame_labels) < t:
+            frame_labels = frame_labels + [""] * (t - len(frame_labels))
 
         fig, ax = plt.subplots(figsize=self.figsize)
         ax.set_xlim(-self.world_size, self.world_size)
@@ -103,6 +107,17 @@ class TrajectoryRenderer:
             trails.append(trail)
             points.append(point)
             ax.scatter(goals[i, 0], goals[i, 1], color=color, marker="*", s=65)
+        label_artist = ax.text(
+            0.02,
+            0.98,
+            "",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            color="black",
+            bbox={"facecolor": "white", "alpha": 0.6, "edgecolor": "none", "pad": 2.0},
+        )
 
         def _update(frame: int):
             artists = []
@@ -114,6 +129,11 @@ class TrajectoryRenderer:
                 else:
                     points[i].set_marker("o")
                 artists.extend([trails[i], points[i]])
+            if frame_labels is not None:
+                label_artist.set_text(frame_labels[frame])
+            else:
+                label_artist.set_text(f"t={frame}")
+            artists.append(label_artist)
             return artists
 
         anim = FuncAnimation(fig, _update, frames=t, interval=max(20, int(1000 / max(1, fps))), blit=True)

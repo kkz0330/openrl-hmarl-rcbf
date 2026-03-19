@@ -12,9 +12,9 @@ env:
   goal_threshold: 0.3
   goal_speed_threshold: 0.1
   lidar_beams: 32
-  lidar_range: 4.5
+  lidar_range: 3.0
   lidar_noise_std: 0.0
-  neighbor_radius: 3.0
+  neighbor_radius: 2.0
   max_neighbors: 4
   min_start_goal_separation: 1.0
   min_agent_separation: 0.8
@@ -31,8 +31,8 @@ synchronization:
   t_sync_max: 20
 
 safety:
-  d_min_agent: 0.6
-  d_safe_obs: 0.6
+  d_min_agent: 0.3
+  d_safe_obs: 0.3
 
 skills:
   names: ["turn_left", "turn_right", "accelerate", "decelerate", "cruise", "hover"]
@@ -49,8 +49,8 @@ skills:
     target_speed: 1.2
     decelerate_target_speed: 0.3
     ref_speed: 1.2
-    d_min_agent: 0.6
-    d_safe_obs: 0.6
+    d_min_agent: 0.3
+    d_safe_obs: 0.3
     cbf_mode: distributed_gcbfplus
     cbf_share_agent: 0.5
     cbf_share_obs: 1.0

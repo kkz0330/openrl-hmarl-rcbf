@@ -1,0 +1,52 @@
+{
+  "seed": 42,
+  "total_iterations": 200,
+  "final_eval": {
+    "eval_n_episodes": 1.0,
+    "eval_success_rate": 0.0,
+    "eval_reach_rate": 0.0,
+    "eval_collision_rate": 1.0,
+    "eval_safe_reach_ratio": 0.0,
+    "eval_min_h_agent": 0.0,
+    "eval_min_h_obstacle": -0.22944366931915283,
+    "eval_avg_traj_length": 2.934911337972153,
+    "eval_avg_skill_switches": 2.0,
+    "eval_qp_feasible_rate": 1.0,
+    "eval_avg_steps": 29.0,
+    "eval_avg_episode_return": -0.708503475189209
+  },
+  "last_eval_during_train": {
+    "eval_n_episodes": 1.0,
+    "eval_success_rate": 0.0,
+    "eval_reach_rate": 0.0,
+    "eval_collision_rate": 1.0,
+    "eval_safe_reach_ratio": 0.0,
+    "eval_min_h_agent": 0.0,
+    "eval_min_h_obstacle": -0.0063512325286865234,
+    "eval_avg_traj_length": 2.8323483144049533,
+    "eval_avg_skill_switches": 2.0,
+    "eval_qp_feasible_rate": 1.0,
+    "eval_avg_steps": 37.0,
+    "eval_avg_episode_return": -0.8094630432128905
+  },
+  "run_dir": "artifacts/hmarl_cbf/train_fixed_single_uav_barrier",
+  "fixed_scene": {
+    "start": [
+      -4.0,
+      0.0
+    ],
+    "goal": [
+      4.0,
+      0.0
+    ],
+    "initial_velocity": [
+      0.0,
+      0.0
+    ],
+    "obstacle_center": [
+      0.0,
+      0.0
+    ],
+    "obstacle_radius": 1.0
+  }
+}
