@@ -1,8 +1,7 @@
 seed: 42
-
 env:
-  n_agents: 4
-  n_obstacles: 3
+  n_agents: 1
+  n_obstacles: 1
   world_size: 10.0
   dt: 0.1
   horizon: 200
@@ -26,17 +25,19 @@ env:
   reward_collision_penalty: 1.0
   reward_oob_penalty: 1.0
   initial_speed_toward_goal: 0.0
-
 synchronization:
-  mode: sync
+  mode: async
   t_sync_max: 20
-
 safety:
   d_min_agent: 0.3
   d_safe_obs: 0.3
-
 skills:
-  names: ["turn_left", "turn_right", "accelerate", "decelerate", "cruise"]
+  names:
+  - turn_left
+  - turn_right
+  - accelerate
+  - decelerate
+  - cruise
   default_max_duration: 20
   params:
     goal_threshold: 0.3
@@ -48,10 +49,10 @@ skills:
     turn_vmag: 0.8
     turn_track_kp: 1.0
     target_speed: 1.2
-    accelerate_mode: goal_tracking
+    accelerate_mode: hmarl_like
     accelerate_heading_blend: 0.0
     decelerate_target_speed: 0.05
-    decelerate_mode: zero_track
+    decelerate_mode: hmarl_like
     decelerate_stop_eps: 0.05
     decelerate_kv: 1.5
     ref_speed: 1.2
@@ -68,13 +69,13 @@ skills:
     w_speed_dev: 0.04
     w_heading_dev: 0.02
     w_progress: 0.02
-    w_goal_dist_pen: 0.02
-
+    w_goal_align_far: 0.03
+    accelerate_step: 0.8
+    decelerate_step: 0.8
 model:
   high_hidden_dim: 128
   low_hidden_dim: 128
   action_dim: 2
-
 high_level_mappo:
   clip_ratio: 0.2
   entropy_coef: 0.01
@@ -83,15 +84,13 @@ high_level_mappo:
   ppo_epochs: 4
   minibatch_size: 64
   normalize_advantages: true
-
 qp:
   backend: cvxpylayers
   use_stub_if_unavailable: true
-
 train:
   rollout_steps: 200
-  total_iterations: 1000
-  eval_interval: 10
+  total_iterations: 500
+  eval_interval: 20
   high_entropy_coef_start: 0.05
   high_entropy_coef_end: 0.01
   high_entropy_decay_iters: 700
@@ -111,9 +110,22 @@ train:
   low_ppo_max_grad_norm: 0.5
   low_policy_action_std: 0.2
   low_normalize_advantages: true
-
 buffer_postprocess:
   gamma_high: 0.99
   lam_high: 0.95
   gamma_low: 0.99
   low_ext_reward_coef: 0.0
+fixed_scene:
+  start:
+  - -4.0
+  - 0.0
+  goal:
+  - 4.0
+  - 0.0
+  initial_velocity:
+  - 0.4000000059604645
+  - 0.0
+  obstacle_center:
+  - 0.0
+  - 0.0
+  obstacle_radius: 1.0

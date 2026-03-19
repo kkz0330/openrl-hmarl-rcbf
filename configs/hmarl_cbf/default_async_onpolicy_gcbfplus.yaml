@@ -48,8 +48,10 @@ skills:
     turn_vmag: 0.8
     turn_track_kp: 1.0
     target_speed: 1.2
+    accelerate_mode: goal_tracking
     accelerate_heading_blend: 0.0
     decelerate_target_speed: 0.05
+    decelerate_mode: zero_track
     decelerate_stop_eps: 0.05
     decelerate_kv: 1.5
     ref_speed: 1.2
@@ -66,7 +68,7 @@ skills:
     w_speed_dev: 0.04
     w_heading_dev: 0.02
     w_progress: 0.02
-    w_goal_align_far: 0.03
+    w_goal_dist_pen: 0.02
 
 model:
   high_hidden_dim: 128

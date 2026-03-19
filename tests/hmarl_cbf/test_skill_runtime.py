@@ -106,6 +106,24 @@ def test_accelerate_defaults_to_goal_heading() -> None:
     assert out.u_ref_skill[1] > 0.0
 
 
+def test_accelerate_hmarl_mode_along_velocity_direction() -> None:
+    skills = build_default_skill_library(max_duration=10)
+    mgr = SkillRuntimeManager(
+        skills,
+        default_ctx={
+            "action_limit": 2.0,
+            "accelerate_mode": "hmarl_like",
+            "accelerate_step": 0.6,
+        },
+    )
+    state = _make_state(position=[0.0, 0.0], velocity=[1.0, 0.0], goal=[0.0, 10.0], agent_id=0)
+    obs = _make_obs(state)
+    mgr.activate_skill(agent_id=0, skill_id=SKILL_ACCELERATE, state=state)
+    out = mgr.step(agent_id=0, state=state, obs_low=obs, executed_action=np.zeros(2, dtype=np.float32))
+    assert out.u_ref_skill[0] > 0.0
+    assert abs(float(out.u_ref_skill[1])) < 1e-4
+
+
 def test_cruise_holds_activation_speed() -> None:
     skills = build_default_skill_library(max_duration=10)
     mgr = SkillRuntimeManager(
@@ -141,3 +159,51 @@ def test_decelerate_zero_velocity_deadzone() -> None:
     mgr.activate_skill(agent_id=0, skill_id=SKILL_DECELERATE, state=state)
     out = mgr.step(agent_id=0, state=state, obs_low=obs, executed_action=np.zeros(2, dtype=np.float32))
     assert float(np.linalg.norm(out.u_ref_skill)) <= 1e-6
+
+
+def test_decelerate_hmarl_mode_along_negative_velocity_direction() -> None:
+    skills = build_default_skill_library(max_duration=10)
+    mgr = SkillRuntimeManager(
+        skills,
+        default_ctx={
+            "decelerate_mode": "hmarl_like",
+            "decelerate_step": 0.5,
+            "decelerate_stop_eps": 0.01,
+            "action_limit": 2.0,
+        },
+    )
+    state = _make_state(position=[0.0, 0.0], velocity=[0.8, 0.0], goal=[2.0, 0.0], agent_id=0)
+    obs = _make_obs(state)
+    mgr.activate_skill(agent_id=0, skill_id=SKILL_DECELERATE, state=state)
+    out = mgr.step(agent_id=0, state=state, obs_low=obs, executed_action=np.zeros(2, dtype=np.float32))
+    assert out.u_ref_skill[0] < 0.0
+    assert abs(float(out.u_ref_skill[1])) < 1e-4
+
+
+def test_intrinsic_reward_penalizes_goal_distance() -> None:
+    skills = build_default_skill_library(max_duration=10)
+    mgr = SkillRuntimeManager(
+        skills,
+        default_ctx={
+            "goal_threshold": 0.1,
+            "action_limit": 2.0,
+            "w_progress": 0.0,
+            "w_accel": 0.0,
+            "w_turn": 0.0,
+            "w_speed_dev": 0.0,
+            "w_heading_dev": 0.0,
+            "w_cruise_stable": 0.0,
+            "w_goal_dist_pen": 0.2,
+        },
+    )
+    near = _make_state(position=[0.0, 0.0], velocity=[0.5, 0.0], goal=[1.0, 0.0], agent_id=0)
+    far = _make_state(position=[0.0, 0.0], velocity=[0.5, 0.0], goal=[3.0, 0.0], agent_id=0)
+    near_obs = _make_obs(near)
+    far_obs = _make_obs(far)
+
+    mgr.activate_skill(agent_id=0, skill_id=SKILL_CRUISE, state=near)
+    near_out = mgr.step(agent_id=0, state=near, obs_low=near_obs, executed_action=np.zeros(2, dtype=np.float32))
+    mgr.activate_skill(agent_id=0, skill_id=SKILL_CRUISE, state=far)
+    far_out = mgr.step(agent_id=0, state=far, obs_low=far_obs, executed_action=np.zeros(2, dtype=np.float32))
+
+    assert far_out.intrinsic_reward < near_out.intrinsic_reward

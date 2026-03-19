@@ -203,13 +203,8 @@ def _intrinsic_reward_common(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, An
     heading_pen = float(ctx.get("w_heading_dev", 0.02)) * abs(_signed_angle_diff(heading, heading_ref))
 
     forward_progress = float(ctx.get("w_progress", 0.02)) * max(0.0, speed * float(np.dot(heading_dir, goal_dir)))
-    slow_radius = float(ctx.get("slow_radius", 0.0))
-    align_far_bonus = 0.0
-    if slow_radius > 0.0 and goal_dist > slow_radius:
-        vel_dir = heading_dir if speed > 1e-6 else goal_dir
-        align = max(0.0, float(np.dot(vel_dir, goal_dir)))
-        align_far_bonus = float(ctx.get("w_goal_align_far", 0.03)) * align
-    return float(forward_progress + align_far_bonus - accel_pen - turn_pen - speed_pen - heading_pen)
+    goal_dist_pen = float(ctx.get("w_goal_dist_pen", 0.02)) * goal_dist
+    return float(forward_progress - accel_pen - turn_pen - speed_pen - heading_pen - goal_dist_pen)
 
 
 def _turn_left_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
@@ -236,6 +231,17 @@ def _accelerate_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
     vel = obs.self_state[2:4] if obs.self_state.shape[0] >= 4 else np.zeros(2, dtype=np.float32)
     speed = float(np.linalg.norm(vel))
     goal_dir = _goal_dir_from_obs(obs)
+    mode = str(ctx.get("accelerate_mode", "goal_tracking")).strip().lower()
+    if mode in {"hmarl_like", "along_velocity", "velocity_increment"}:
+        accel_step = float(ctx.get("accelerate_step", ctx.get("accelerate_gain", 0.8)))
+        if speed > 1e-4:
+            move_dir = _unit(vel)
+        else:
+            heading = float(ctx.get("heading_ref", atan2(float(goal_dir[1]), float(goal_dir[0]))))
+            move_dir = np.asarray([np.cos(heading), np.sin(heading)], dtype=np.float32)
+        action = accel_step * move_dir
+        return _clip_action(action, ctx)
+
     vel_dir = _unit(vel) if speed > 1e-4 else goal_dir
     heading_blend = float(ctx.get("accelerate_heading_blend", 0.0))
     heading_blend = float(np.clip(heading_blend, 0.0, 1.0))
@@ -251,7 +257,12 @@ def _decelerate_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
     speed = float(np.linalg.norm(vel))
     stop_eps = float(ctx.get("decelerate_stop_eps", 0.05))
     if speed <= stop_eps:
-        action = np.zeros(2, dtype=np.float32)
+        return np.zeros(2, dtype=np.float32)
+
+    mode = str(ctx.get("decelerate_mode", "zero_track")).strip().lower()
+    if mode in {"hmarl_like", "along_velocity", "velocity_decrement"}:
+        decel_step = float(ctx.get("decelerate_step", ctx.get("decelerate_gain", 0.8)))
+        action = -decel_step * _unit(vel)
     else:
         kv = float(ctx.get("decelerate_kv", 1.5))
         action = -kv * vel
