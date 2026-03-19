@@ -69,7 +69,7 @@ skills:
     w_speed_dev: 0.04
     w_heading_dev: 0.02
     w_progress: 0.02
-    w_goal_align_far: 0.03
+    w_goal_dist_pen: 0.02
     accelerate_step: 0.8
     decelerate_step: 0.8
 model:
