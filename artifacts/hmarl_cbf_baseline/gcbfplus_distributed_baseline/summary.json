@@ -1,0 +1,9 @@
+{
+  "episodes": 20,
+  "seed_base": 42,
+  "overall_safe_reach_ratio": 1.0,
+  "success_round_rate": 1.0,
+  "episode_return_mean": 50.739664944354026,
+  "qp_feasible_rate": 1.0,
+  "run_dir": "artifacts/hmarl_cbf_baseline/gcbfplus_distributed_baseline"
+}

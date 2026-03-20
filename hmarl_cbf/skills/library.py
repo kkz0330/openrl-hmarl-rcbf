@@ -254,13 +254,30 @@ def _accelerate_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
     goal_dir = _goal_dir_from_obs(obs)
     mode = str(ctx.get("accelerate_mode", "goal_tracking")).strip().lower()
     if mode in {"hmarl_like", "along_velocity", "velocity_increment"}:
-        accel_step = float(ctx.get("accelerate_step", ctx.get("accelerate_gain", 0.8)))
+        delta_speed = float(max(ctx.get("accelerate_delta_speed", 0.2), 0.0))
+        target_speed = float(
+            max(
+                ctx.get("target_speed", 1.2),
+                float(ctx.get("start_speed", speed)) + float(ctx.get("accelerate_delta_floor", 0.0)),
+            )
+        )
+        dv = min(delta_speed, max(0.0, target_speed - speed))
         if speed > 1e-4:
             move_dir = _unit(vel)
         else:
             heading = float(ctx.get("heading_ref", atan2(float(goal_dir[1]), float(goal_dir[0]))))
             move_dir = np.asarray([np.cos(heading), np.sin(heading)], dtype=np.float32)
-        action = accel_step * move_dir
+        if dv <= 0.0:
+            action = np.zeros(2, dtype=np.float32)
+        else:
+            dt = float(ctx.get("dt", 0.0))
+            if dt > 1e-8:
+                # Delta-speed semantics: increase speed by at most `accelerate_delta_speed`
+                # in one step, and clamp to target speed.
+                action = (dv / dt) * move_dir
+            else:
+                accel_step = float(ctx.get("accelerate_step", ctx.get("accelerate_gain", 0.8)))
+                action = accel_step * move_dir
         return _clip_action(action, ctx)
 
     vel_dir = _unit(vel) if speed > 1e-4 else goal_dir
