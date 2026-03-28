@@ -56,3 +56,5 @@ baseline:
   obstacle_range: 4.5
   use_input_bounds: true
   unbounded_action_limit: 1000000.0
+  fallback_brake_on_qp_failure: true
+  fallback_brake_gain: 1.5

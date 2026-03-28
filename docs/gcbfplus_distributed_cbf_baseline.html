@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>gcbfplus_distributed_cbf_baseline</title>
+  <style>
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#gcbf-分散式-cbf-基线说明当前项目实现"
+id="toc-gcbf-分散式-cbf-基线说明当前项目实现">GCBF+ 分散式 CBF
+基线说明（当前项目实现）</a>
+<ul>
+<li><a href="#目标与范围" id="toc-目标与范围">1. 目标与范围</a></li>
+<li><a href="#状态动力学与参考控制" id="toc-状态动力学与参考控制">2.
+状态、动力学与参考控制</a>
+<ul>
+<li><a href="#智能体状态" id="toc-智能体状态">2.1 智能体状态</a></li>
+<li><a href="#名义控制-u_mathrmref" id="toc-名义控制-u_mathrmref">2.2
+名义控制
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>u</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi></mrow></msub><annotation encoding="application/x-tex">u_{\mathrm{ref}}</annotation></semantics></math></a></li>
+</ul></li>
+<li><a href="#qp-结构式" id="toc-qp-结构式">3. QP 结构式</a></li>
+<li><a href="#clf软约束" id="toc-clf软约束">4. CLF（软约束）</a></li>
+<li><a href="#分散式-cbf-约束" id="toc-分散式-cbf-约束">5. 分散式 CBF
+约束</a>
+<ul>
+<li><a href="#agent-agent-安全函数" id="toc-agent-agent-安全函数">5.1
+Agent-Agent 安全函数</a></li>
+<li><a href="#agent-obstacle-安全函数"
+id="toc-agent-obstacle-安全函数">5.2 Agent-Obstacle 安全函数</a></li>
+</ul></li>
+<li><a href="#局部分布式感知与按需加约束"
+id="toc-局部分布式感知与按需加约束">6.
+局部分布式感知与“按需加约束”</a></li>
+<li><a href="#基线算法流程" id="toc-基线算法流程">7.
+基线算法流程</a></li>
+<li><a href="#关键配置项" id="toc-关键配置项">8. 关键配置项</a></li>
+<li><a href="#运行与输出" id="toc-运行与输出">9. 运行与输出</a>
+<ul>
+<li><a href="#默认场景" id="toc-默认场景">9.1 默认场景</a></li>
+<li><a href="#更复杂场景" id="toc-更复杂场景">9.2 更复杂场景</a></li>
+<li><a href="#输出目录" id="toc-输出目录">9.3 输出目录</a></li>
+</ul></li>
+<li><a href="#符号表" id="toc-符号表">10. 符号表</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="gcbf-分散式-cbf-基线说明当前项目实现">GCBF+ 分散式 CBF
+基线说明（当前项目实现）</h1>
+<h2 id="目标与范围">1. 目标与范围</h2>
+<p>该基线是在当前仓库中实现的<strong>非学习型</strong>安全控制器：不训练策略网络，只在每个时刻对每个智能体求解一个分布式
+CBF-QP，完成 2D 多无人机到达任务中的避障与避碰。</p>
+<p>对应代码：</p>
+<ul>
+<li>控制器：<a
+href="/C:/Users/shirosk/Documents/New%20project/hmarl_cbf/baselines/distributed_cbf.py">hmarl_cbf/baselines/distributed_cbf.py</a></li>
+<li>约束构造：<a
+href="/C:/Users/shirosk/Documents/New%20project/hmarl_cbf/control/constraint_builder.py">hmarl_cbf/control/constraint_builder.py</a></li>
+<li>运行脚本：<a
+href="/C:/Users/shirosk/Documents/New%20project/hmarl_cbf/train/run_distributed_cbf_baseline.py">hmarl_cbf/train/run_distributed_cbf_baseline.py</a></li>
+<li>默认配置：<a
+href="/C:/Users/shirosk/Documents/New%20project/configs/hmarl_cbf/baseline_distributed_cbf.yaml">configs/hmarl_cbf/baseline_distributed_cbf.yaml</a></li>
+</ul>
+<h2 id="状态动力学与参考控制">2. 状态、动力学与参考控制</h2>
+<h3 id="智能体状态">2.1 智能体状态</h3>
+<p>对第
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>
+个智能体：</p>
+<ul>
+<li>位置：<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>p</mi><mi>i</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">p_i \in \mathbb{R}^2</annotation></semantics></math></li>
+<li>速度：<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>v</mi><mi>i</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">v_i \in \mathbb{R}^2</annotation></semantics></math></li>
+<li>控制输入：<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>u</mi><mi>i</mi></msub><mo>∈</mo><msup><mi>ℝ</mi><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">u_i \in \mathbb{R}^2</annotation></semantics></math>（加速度）</li>
+</ul>
+<p>双积分器形式：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>p</mi><mo accent="true">̇</mo></mover><mi>i</mi></msub><mo>=</mo><msub><mi>v</mi><mi>i</mi></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mover><mi>v</mi><mo accent="true">̇</mo></mover><mi>i</mi></msub><mo>=</mo><msub><mi>u</mi><mi>i</mi></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\dot p_i = v_i, \qquad \dot v_i = u_i.
+</annotation></semantics></math></p>
+<h3 id="名义控制-u_mathrmref">2.2 名义控制
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>u</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi></mrow></msub><annotation encoding="application/x-tex">u_{\mathrm{ref}}</annotation></semantics></math></h3>
+<p>基线中的
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>u</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi></mrow></msub><annotation encoding="application/x-tex">u_{\mathrm{ref}}</annotation></semantics></math>
+由目标跟踪速度误差得到：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msubsup><mi>v</mi><mi>i</mi><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">s</mi></mrow></msubsup><mo>=</mo><msubsup><mi>s</mi><mi>i</mi><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">s</mi></mrow></msubsup><mspace width="0.167em"></mspace><msub><mover><mi>g</mi><mo accent="true">̂</mo></mover><mi>i</mi></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>u</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi></mrow><mo>,</mo><mi>i</mi></mrow></msub><mo>=</mo><msub><mi>k</mi><mi>v</mi></msub><mrow><mo stretchy="true" form="prefix">(</mo><msubsup><mi>v</mi><mi>i</mi><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">s</mi></mrow></msubsup><mo>−</mo><msub><mi>v</mi><mi>i</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+v_i^{\mathrm{des}} = s_i^{\mathrm{des}}\,\hat g_i,
+\qquad
+u_{\mathrm{ref},i} = k_v\left(v_i^{\mathrm{des}} - v_i\right),
+</annotation></semantics></math></p>
+<p>其中：</p>
+<ul>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>g</mi><mo accent="true">̂</mo></mover><mi>i</mi></msub><mo>=</mo><mfrac displaystyle="true"><mrow><msub><mi>g</mi><mi>i</mi></msub><mo>−</mo><msub><mi>p</mi><mi>i</mi></msub></mrow><mrow><mo stretchy="false" form="postfix">∥</mo><msub><mi>g</mi><mi>i</mi></msub><mo>−</mo><msub><mi>p</mi><mi>i</mi></msub><mo stretchy="false" form="postfix">∥</mo></mrow></mfrac></mrow><annotation encoding="application/x-tex">\hat g_i = \dfrac{g_i-p_i}{\|g_i-p_i\|}</annotation></semantics></math>（若距离极小则回退到速度方向/默认方向）；</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msubsup><mi>s</mi><mi>i</mi><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">s</mi></mrow></msubsup><annotation encoding="application/x-tex">s_i^{\mathrm{des}}</annotation></semantics></math>
+由 <code>ref_speed</code> 与 <code>slow_radius</code> 缩放；</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>k</mi><mi>v</mi></msub><annotation encoding="application/x-tex">k_v</annotation></semantics></math>
+对应配置 <code>speed_kp</code>。</li>
+</ul>
+<p>实现位置：<code>DistributedCBFBaselineController._goal_tracking_u_ref()</code>。</p>
+<h2 id="qp-结构式">3. QP 结构式</h2>
+<p>每个智能体、每个时间步求解：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mtable><mtr><mtd columnalign="right" style="text-align: right"><munder><mo>min</mo><mrow><msub><mi>u</mi><mi>i</mi></msub><mo>,</mo><mspace width="0.167em"></mspace><msub><mi>δ</mi><mi>i</mi></msub></mrow></munder><mspace width="0.278em"></mspace></mtd><mtd columnalign="left" style="text-align: left"><mfrac><mn>1</mn><mn>2</mn></mfrac><msubsup><mi>u</mi><mi>i</mi><mi>⊤</mi></msubsup><mo>diag</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>r</mi><mi>i</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><msub><mi>u</mi><mi>i</mi></msub><mo>+</mo><msubsup><mi>f</mi><mi>i</mi><mi>⊤</mi></msubsup><msub><mi>u</mi><mi>i</mi></msub><mo>+</mo><msub><mi>w</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">f</mi></mrow></msub><mspace width="0.167em"></mspace><msub><mi>δ</mi><mi>i</mi></msub></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"><mtext mathvariant="normal">s.t.</mtext><mspace width="0.278em"></mspace></mtd><mtd columnalign="left" style="text-align: left"><msub><mi>A</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">f</mi></mrow><mo>,</mo><mi>i</mi></mrow></msub><msub><mi>u</mi><mi>i</mi></msub><mo>≤</mo><msub><mi>b</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">f</mi></mrow><mo>,</mo><mi>i</mi></mrow></msub><mo>,</mo></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><msub><mi>A</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">f</mi></mrow><mo>,</mo><mi>i</mi></mrow></msub><msub><mi>u</mi><mi>i</mi></msub><mo>≤</mo><msub><mi>b</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">f</mi></mrow><mo>,</mo><mi>i</mi></mrow></msub><mo>+</mo><msub><mi>δ</mi><mi>i</mi></msub><mo>,</mo></mtd></mtr><mtr><mtd columnalign="right" style="text-align: right"></mtd><mtd columnalign="left" style="text-align: left"><msub><mi>u</mi><mo>min</mo></msub><mo>≤</mo><msub><mi>u</mi><mi>i</mi></msub><mo>≤</mo><msub><mi>u</mi><mo>max</mo></msub><mo>,</mo><mspace width="1.0em"></mspace><msub><mi>δ</mi><mi>i</mi></msub><mo>≥</mo><mn>0</mn><mi>.</mi></mtd></mtr></mtable><annotation encoding="application/x-tex">
+\begin{aligned}
+\min_{u_i,\,\delta_i}\;&amp; \frac12 u_i^\top \operatorname{diag}(r_i)u_i + f_i^\top u_i + w_{\mathrm{clf}}\,\delta_i \\
+\text{s.t.}\;&amp; A_{\mathrm{cbf},i}u_i \le b_{\mathrm{cbf},i}, \\
+&amp; A_{\mathrm{clf},i}u_i \le b_{\mathrm{clf},i}+\delta_i, \\
+&amp; u_{\min}\le u_i\le u_{\max},\quad \delta_i\ge 0.
+\end{aligned}
+</annotation></semantics></math></p>
+<p>其中：</p>
+<ul>
+<li>若未显式提供
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>f</mi><mi>i</mi></msub><annotation encoding="application/x-tex">f_i</annotation></semantics></math>，代码取
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>f</mi><mi>i</mi></msub><mo>=</mo><mi>−</mi><mo>diag</mo><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>r</mi><mi>i</mi></msub><mo stretchy="true" form="postfix">)</mo></mrow><msub><mi>u</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi></mrow><mo>,</mo><mi>i</mi></mrow></msub></mrow><annotation encoding="application/x-tex">f_i=-\operatorname{diag}(r_i)u_{\mathrm{ref},i}</annotation></semantics></math>，对应“尽量贴近
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>u</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi></mrow></msub><annotation encoding="application/x-tex">u_{\mathrm{ref}}</annotation></semantics></math>”的二次型；</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>δ</mi><mi>i</mi></msub><annotation encoding="application/x-tex">\delta_i</annotation></semantics></math>
+仅用于 CLF 软约束，CBF 约束为硬约束；</li>
+<li>若求解失败，会走 deterministic
+fallback（<code>stub_clipped</code>），将动作回退为裁剪后的无约束最优近似。</li>
+</ul>
+<p>实现位置：</p>
+<ul>
+<li>构造 <code>QPProblem</code>：<a
+href="/C:/Users/shirosk/Documents/New%20project/hmarl_cbf/control/constraint_builder.py">hmarl_cbf/control/constraint_builder.py</a></li>
+<li>求解器：<a
+href="/C:/Users/shirosk/Documents/New%20project/hmarl_cbf/control/qp_solver.py">hmarl_cbf/control/qp_solver.py</a></li>
+</ul>
+<h2 id="clf软约束">4. CLF（软约束）</h2>
+<p>速度跟踪型 CLF：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>V</mi><mi>i</mi></msub><mo>=</mo><mfrac><mn>1</mn><mn>2</mn></mfrac><mo stretchy="false" form="postfix">∥</mo><msub><mi>v</mi><mi>i</mi></msub><mo>−</mo><msubsup><mi>v</mi><mi>i</mi><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">s</mi></mrow></msubsup><msup><mo stretchy="false" form="postfix">∥</mo><mn>2</mn></msup><mo>,</mo></mrow><annotation encoding="application/x-tex">
+V_i = \frac12\|v_i-v_i^{\mathrm{des}}\|^2,
+</annotation></semantics></math></p>
+<p>并约束</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>V</mi><mo accent="true">̇</mo></mover><mi>i</mi></msub><mo>≤</mo><mi>−</mi><msub><mi>k</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">f</mi></mrow></msub><msub><mi>V</mi><mi>i</mi></msub><mo>+</mo><msub><mi>δ</mi><mi>i</mi></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+\dot V_i \le -k_{\mathrm{clf}}V_i + \delta_i.
+</annotation></semantics></math></p>
+<p>在双积分器下，<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mover><mi>V</mi><mo accent="true">̇</mo></mover><mi>i</mi></msub><mo>=</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>v</mi><mi>i</mi></msub><mo>−</mo><msubsup><mi>v</mi><mi>i</mi><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">s</mi></mrow></msubsup><mo stretchy="true" form="postfix">)</mo></mrow><mi>⊤</mi></msup><msub><mi>u</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">\dot V_i=(v_i-v_i^{\mathrm{des}})^\top u_i</annotation></semantics></math>（忽略
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msubsup><mover><mi>v</mi><mo accent="true">̇</mo></mover><mi>i</mi><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">s</mi></mrow></msubsup><annotation encoding="application/x-tex">\dot v_i^{\mathrm{des}}</annotation></semantics></math>），故线性不等式可写为：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">f</mi></mrow><mo>,</mo><mi>i</mi></mrow></msub><mo>=</mo><msup><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>v</mi><mi>i</mi></msub><mo>−</mo><msubsup><mi>v</mi><mi>i</mi><mrow><mi mathvariant="normal">d</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">s</mi></mrow></msubsup><mo stretchy="true" form="postfix">)</mo></mrow><mi>⊤</mi></msup><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>b</mi><mrow><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">f</mi></mrow><mo>,</mo><mi>i</mi></mrow></msub><mo>=</mo><mi>−</mi><msub><mi>k</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">f</mi></mrow></msub><msub><mi>V</mi><mi>i</mi></msub><mi>.</mi></mrow><annotation encoding="application/x-tex">
+A_{\mathrm{clf},i}= (v_i-v_i^{\mathrm{des}})^\top,
+\qquad
+b_{\mathrm{clf},i}= -k_{\mathrm{clf}}V_i.
+</annotation></semantics></math></p>
+<h2 id="分散式-cbf-约束">5. 分散式 CBF 约束</h2>
+<p>基线支持三种模式（<code>baseline.cbf_mode</code>）：</p>
+<ul>
+<li><code>distributed_ecbf</code></li>
+<li><code>distributed_gcbfplus</code></li>
+<li><code>distributed_hocbf54</code>（默认，贴近 GCBF+
+文中式(54)风格）</li>
+</ul>
+<h3 id="agent-agent-安全函数">5.1 Agent-Agent 安全函数</h3>
+<p>设相对量：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>p</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><msub><mi>p</mi><mi>i</mi></msub><mo>−</mo><msub><mi>p</mi><mi>j</mi></msub><mo>,</mo><mspace width="1.0em"></mspace><msub><mi>v</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><msub><mi>v</mi><mi>i</mi></msub><mo>−</mo><msub><mi>v</mi><mi>j</mi></msub><mo>,</mo><mspace width="1.0em"></mspace><msub><mi>d</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mo stretchy="false" form="postfix">∥</mo><msub><mi>p</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo stretchy="false" form="postfix">∥</mo><mo>,</mo></mrow><annotation encoding="application/x-tex">
+p_{ij}=p_i-p_j,\quad v_{ij}=v_i-v_j,\quad d_{ij}=\|p_{ij}\|,
+</annotation></semantics></math></p>
+<p>安全距离
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>d</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi></mrow></msub><annotation encoding="application/x-tex">d_{\mathrm{safe}}</annotation></semantics></math>（代码中来自
+<code>d_min_agent</code>）。</p>
+<h4 id="a-distributed_hocbf54">a) <code>distributed_hocbf54</code></h4>
+<p>采用 reciprocal 形式：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>h</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><msqrt><mrow><mn>4</mn><msub><mi>u</mi><mo>max</mo></msub><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>d</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>−</mo><msub><mi>d</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi></mrow></msub><mo stretchy="true" form="postfix">)</mo></mrow></mrow></msqrt><mo>+</mo><msubsup><mi>n</mi><mrow><mi>i</mi><mi>j</mi></mrow><mi>⊤</mi></msubsup><msub><mi>v</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>n</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>=</mo><mfrac><msub><mi>p</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mrow><mo stretchy="false" form="postfix">∥</mo><msub><mi>p</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo stretchy="false" form="postfix">∥</mo></mrow></mfrac><mi>.</mi></mrow><annotation encoding="application/x-tex">
+h_{ij}=\sqrt{4u_{\max}(d_{ij}-d_{\mathrm{safe}})} + n_{ij}^\top v_{ij},
+\qquad
+n_{ij}=\frac{p_{ij}}{\|p_{ij}\|}.
+</annotation></semantics></math></p>
+<p>代码将其线性化为局部仿射约束</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><msub><mi>u</mi><mi>i</mi></msub><mo>≤</mo><msub><mi>c</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><mo>+</mo><msub><mi>k</mi><mn>1</mn></msub><mspace width="0.167em"></mspace><msubsup><mover><mi>h</mi><mo accent="true">̇</mo></mover><mrow><mi>i</mi><mi>j</mi></mrow><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">m</mi></mrow></msubsup><mo>+</mo><msub><mi>k</mi><mn>0</mn></msub><mspace width="0.167em"></mspace><msubsup><mi>h</mi><mrow><mi>i</mi><mi>j</mi></mrow><mrow><mi mathvariant="normal">t</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">r</mi><mi mathvariant="normal">m</mi></mrow></msubsup><mo>,</mo></mrow><annotation encoding="application/x-tex">
+A_{ij}u_i \le c_{ij} + k_1\,\dot h_{ij}^{\mathrm{term}} + k_0\,h_{ij}^{\mathrm{term}},
+</annotation></semantics></math></p>
+<p>其中 <code>share</code>（责任均分）并入
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>h</mi><annotation encoding="application/x-tex">h</annotation></semantics></math>
+与
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mover><mi>h</mi><mo accent="true">̇</mo></mover><annotation encoding="application/x-tex">\dot h</annotation></semantics></math>
+项。</p>
+<h4 id="b-distributed_gcbfplus">b)
+<code>distributed_gcbfplus</code></h4>
+<p>二阶链式：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>h</mi><mn>0</mn></msub><mo>=</mo><mo stretchy="false" form="postfix">∥</mo><msub><mi>p</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><msup><mo stretchy="false" form="postfix">∥</mo><mn>2</mn></msup><mo>−</mo><msubsup><mi>d</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi></mrow><mn>2</mn></msubsup><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>h</mi><mn>1</mn></msub><mo>=</mo><msub><mover><mi>h</mi><mo accent="true">̇</mo></mover><mn>0</mn></msub><mo>+</mo><msub><mi>α</mi><mn>0</mn></msub><msub><mi>h</mi><mn>0</mn></msub><mo>,</mo></mrow><annotation encoding="application/x-tex">
+h_0=\|p_{ij}\|^2-d_{\mathrm{safe}}^2,
+\qquad
+h_1=\dot h_0+\alpha_0 h_0,
+</annotation></semantics></math></p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>−</mi><msub><mi>L</mi><mi>g</mi></msub><msub><mi>h</mi><mn>1</mn></msub><mspace width="0.167em"></mspace><msub><mi>u</mi><mi>i</mi></msub><mo>≤</mo><mi>ρ</mi><mrow><mo stretchy="true" form="prefix">(</mo><msub><mi>L</mi><mi>f</mi></msub><msub><mi>h</mi><mn>1</mn></msub><mo>+</mo><msub><mi>α</mi><mn>1</mn></msub><msub><mi>h</mi><mn>1</mn></msub><mo stretchy="true" form="postfix">)</mo></mrow><mo>,</mo></mrow><annotation encoding="application/x-tex">
+-L_gh_1\,u_i \le \rho\left(L_fh_1+\alpha_1h_1\right),
+</annotation></semantics></math></p>
+<p>其中
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>ρ</mi><annotation encoding="application/x-tex">\rho</annotation></semantics></math>
+是责任分配系数（<code>cbf_share_agent</code>）。</p>
+<h4 id="c-distributed_ecbf">c) <code>distributed_ecbf</code></h4>
+<p>等价于 ECBF 风格线性化：</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mover><mi>h</mi><mo accent="true">̈</mo></mover><mo>+</mo><msub><mi>k</mi><mn>1</mn></msub><mover><mi>h</mi><mo accent="true">̇</mo></mover><mo>+</mo><msub><mi>k</mi><mn>0</mn></msub><mi>h</mi><mo>≥</mo><mn>0</mn><mo>,</mo><mspace width="1.0em"></mspace><mi>h</mi><mo>=</mo><mo stretchy="false" form="postfix">∥</mo><msub><mi>p</mi><mrow><mi>i</mi><mi>j</mi></mrow></msub><msup><mo stretchy="false" form="postfix">∥</mo><mn>2</mn></msup><mo>−</mo><msubsup><mi>d</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi></mrow><mn>2</mn></msubsup><mo>,</mo></mrow><annotation encoding="application/x-tex">
+\ddot h + k_1\dot h + k_0 h \ge 0,
+\quad h=\|p_{ij}\|^2-d_{\mathrm{safe}}^2,
+</annotation></semantics></math></p>
+<p>并整理为对
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>u</mi><mi>i</mi></msub><annotation encoding="application/x-tex">u_i</annotation></semantics></math>
+的线性不等式。</p>
+<h3 id="agent-obstacle-安全函数">5.2 Agent-Obstacle 安全函数</h3>
+<p>对圆障碍中心
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>o</mi><mi>m</mi></msub><annotation encoding="application/x-tex">o_m</annotation></semantics></math>、半径
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>r</mi><mi>m</mi></msub><annotation encoding="application/x-tex">r_m</annotation></semantics></math>，令</p>
+<p><math display="block" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>p</mi><mrow><mi>i</mi><mi>m</mi></mrow></msub><mo>=</mo><msub><mi>p</mi><mi>i</mi></msub><mo>−</mo><msub><mi>o</mi><mi>m</mi></msub><mo>,</mo><mspace width="2.0em"></mspace><msub><mi>d</mi><mrow><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi></mrow><mo>,</mo><mi>m</mi></mrow></msub><mo>=</mo><msub><mi>r</mi><mi>m</mi></msub><mo>+</mo><msubsup><mi>d</mi><mrow><mi mathvariant="normal">s</mi><mi mathvariant="normal">a</mi><mi mathvariant="normal">f</mi><mi mathvariant="normal">e</mi></mrow><mrow><mi mathvariant="normal">o</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">s</mi></mrow></msubsup><mo>,</mo></mrow><annotation encoding="application/x-tex">
+p_{im}=p_i-o_m,
+\qquad
+d_{\mathrm{safe},m}=r_m+d_{\mathrm{safe}}^{\mathrm{obs}},
+</annotation></semantics></math></p>
+<p>采用与上面同构的三种 CBF 形式，仅把相对对象替换为障碍物，责任系数用
+<code>cbf_share_obs</code>。</p>
+<h2 id="局部分布式感知与按需加约束">6. 局部分布式感知与“按需加约束”</h2>
+<p>控制器并不对所有实体加约束，而是先做本地过滤：</p>
+<ul>
+<li>邻居过滤：距离
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mo>≤</mo><annotation encoding="application/x-tex">\le</annotation></semantics></math>
+<code>neighbor_radius</code></li>
+<li>障碍过滤：障碍表面距离
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mo>≤</mo><annotation encoding="application/x-tex">\le</annotation></semantics></math>
+<code>obstacle_range</code></li>
+</ul>
+<p>只有被感知到的邻居/障碍才写入当前时刻
+<code>A_cbf,b_cbf</code>。这就是“仅对感知到的对象引入 CBF”。</p>
+<h2 id="基线算法流程">7. 基线算法流程</h2>
+<p>每个 episode：</p>
+<ol type="1">
+<li>环境 reset，采样初始智能体与障碍布局。</li>
+<li>每个仿真步，对每个智能体：
+<ul>
+<li>计算
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>u</mi><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi></mrow></msub><annotation encoding="application/x-tex">u_{\mathrm{ref}}</annotation></semantics></math>；</li>
+<li>过滤本地邻居/障碍；</li>
+<li>构造 CBF/CLF/输入边界约束；</li>
+<li>求解 QP 得到
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>u</mi><mi>i</mi></msub><annotation encoding="application/x-tex">u_i</annotation></semantics></math>。</li>
+</ul></li>
+<li>聚合全部动作推进环境一步。</li>
+<li>记录
+<code>safe_reach_count</code>、<code>success_round</code>、<code>episode_return_mean</code>、<code>qp_feasible_rate</code>
+等指标。</li>
+<li>可选导出 GIF/PNG 轨迹可视化。</li>
+</ol>
+<h2 id="关键配置项">8. 关键配置项</h2>
+<ul>
+<li><code>safety.d_min_agent</code>：机间安全距离</li>
+<li><code>safety.d_safe_obs</code>：障碍附加安全距离</li>
+<li><code>baseline.cbf_mode</code>：CBF 公式分支</li>
+<li><code>baseline.cbf_share_agent / cbf_share_obs</code>：责任分配比例</li>
+<li><code>baseline.neighbor_radius / obstacle_range</code>：感知半径</li>
+<li><code>baseline.ref_speed / slow_radius / speed_kp</code>：名义速度跟踪</li>
+<li><code>baseline.r_diag / w_clf</code>：QP 目标权重</li>
+<li><code>baseline.use_input_bounds</code>：是否启用输入限幅</li>
+</ul>
+<h2 id="运行与输出">9. 运行与输出</h2>
+<h3 id="默认场景">9.1 默认场景</h3>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> hmarl_cbf.train.run_distributed_cbf_baseline <span class="dt">\</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config</span> configs/hmarl_cbf/baseline_distributed_cbf.yaml <span class="dt">\</span></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--run-name</span> gcbfplus_distributed_baseline <span class="dt">\</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--episodes</span> 20 <span class="dt">\</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--render-gif</span> <span class="dt">\</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--fps</span> 8</span></code></pre></div>
+<h3 id="更复杂场景">9.2 更复杂场景</h3>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">python</span> <span class="at">-m</span> hmarl_cbf.train.run_distributed_cbf_baseline <span class="dt">\</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">--config</span> configs/hmarl_cbf/baseline_distributed_cbf_complex.yaml <span class="dt">\</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">--run-name</span> gcbfplus_baseline_complex_n8_o8 <span class="dt">\</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>  <span class="at">--episodes</span> 30 <span class="dt">\</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>  <span class="at">--render-gif</span> <span class="dt">\</span></span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">--fps</span> 8</span></code></pre></div>
+<h3 id="输出目录">9.3 输出目录</h3>
+<ul>
+<li><code>artifacts/hmarl_cbf_baseline/&lt;run-name&gt;/episode_results.csv</code></li>
+<li><code>artifacts/hmarl_cbf_baseline/&lt;run-name&gt;/summary.json</code></li>
+<li><code>artifacts/hmarl_cbf_baseline/&lt;run-name&gt;/media/episode_XXX.gif</code></li>
+</ul>
+<h2 id="符号表">10. 符号表</h2>
+<ul>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>p</mi><mi>i</mi></msub><mo>,</mo><msub><mi>v</mi><mi>i</mi></msub><mo>,</mo><msub><mi>u</mi><mi>i</mi></msub></mrow><annotation encoding="application/x-tex">p_i,v_i,u_i</annotation></semantics></math>：第
+<math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mi>i</mi><annotation encoding="application/x-tex">i</annotation></semantics></math>
+个智能体的位置、速度、控制输入</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>g</mi><mi>i</mi></msub><annotation encoding="application/x-tex">g_i</annotation></semantics></math>：目标点</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>u</mi><mrow><mrow><mi mathvariant="normal">r</mi><mi mathvariant="normal">e</mi><mi mathvariant="normal">f</mi></mrow><mo>,</mo><mi>i</mi></mrow></msub><annotation encoding="application/x-tex">u_{\mathrm{ref},i}</annotation></semantics></math>：名义参考输入</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>r</mi><mi>i</mi></msub><annotation encoding="application/x-tex">r_i</annotation></semantics></math>：QP
+二次项对角权重</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>f</mi><mi>i</mi></msub><annotation encoding="application/x-tex">f_i</annotation></semantics></math>：QP
+一次项</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>δ</mi><mi>i</mi></msub><annotation encoding="application/x-tex">\delta_i</annotation></semantics></math>：CLF
+松弛变量</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">f</mi></mrow></msub><mo>,</mo><msub><mi>b</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">b</mi><mi mathvariant="normal">f</mi></mrow></msub></mrow><annotation encoding="application/x-tex">A_{\mathrm{cbf}},b_{\mathrm{cbf}}</annotation></semantics></math>：CBF
+线性不等式矩阵与向量</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>A</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">f</mi></mrow></msub><mo>,</mo><msub><mi>b</mi><mrow><mi mathvariant="normal">c</mi><mi mathvariant="normal">l</mi><mi mathvariant="normal">f</mi></mrow></msub></mrow><annotation encoding="application/x-tex">A_{\mathrm{clf}},b_{\mathrm{clf}}</annotation></semantics></math>：CLF
+线性不等式矩阵与向量</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>k</mi><mn>0</mn></msub><mo>,</mo><msub><mi>k</mi><mn>1</mn></msub></mrow><annotation encoding="application/x-tex">k_0,k_1</annotation></semantics></math>：CBF
+增益</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><msub><mi>α</mi><mn>0</mn></msub><mo>,</mo><msub><mi>α</mi><mn>1</mn></msub></mrow><annotation encoding="application/x-tex">\alpha_0,\alpha_1</annotation></semantics></math>：<code>distributed_gcbfplus</code>
+模式下组合增益</li>
+<li><math display="inline" xmlns="http://www.w3.org/1998/Math/MathML"><semantics><msub><mi>u</mi><mo>max</mo></msub><annotation encoding="application/x-tex">u_{\max}</annotation></semantics></math>：式(54)型
+CBF 中使用的最大控制幅值参数</li>
+</ul>
+</body>
+</html>
