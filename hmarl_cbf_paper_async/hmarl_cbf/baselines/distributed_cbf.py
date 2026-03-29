@@ -31,6 +31,9 @@ class DistributedCBFBaselineConfig:
     goal_stop_min_speed: float = 0.0
     neighbor_radius: float = 2.0
     obstacle_range: float = 3.0
+    boundary_cbf: bool = True
+    boundary_margin: float = 0.3
+    world_size: float = 10.0
     use_input_bounds: bool = True
     unbounded_action_limit: float = 1e6
 
@@ -61,6 +64,9 @@ class DistributedCBFBaselineConfig:
             goal_stop_min_speed=float(data.get("goal_stop_min_speed", 0.0)),
             neighbor_radius=float(data.get("neighbor_radius", 2.0)),
             obstacle_range=float(data.get("obstacle_range", 3.0)),
+            boundary_cbf=bool(data.get("boundary_cbf", True)),
+            boundary_margin=float(data.get("boundary_margin", 0.3)),
+            world_size=float(data.get("world_size", 10.0)),
             use_input_bounds=bool(data.get("use_input_bounds", True)),
             unbounded_action_limit=float(data.get("unbounded_action_limit", 1e6)),
         )
@@ -182,6 +188,9 @@ class DistributedCBFBaselineController:
                 "target_speed": float(self.config.ref_speed),
                 "slow_radius": float(self.config.slow_radius),
                 "goal_stop_min_speed": float(self.config.goal_stop_min_speed),
+                "boundary_cbf": bool(self.config.boundary_cbf),
+                "boundary_margin": float(self.config.boundary_margin),
+                "world_size": float(self.config.world_size),
                 "w_cbf": float(self.config.w_cbf),
                 "cbf_slack_max": float(self.config.cbf_slack_max),
             }

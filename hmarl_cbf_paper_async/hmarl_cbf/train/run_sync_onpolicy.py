@@ -132,6 +132,59 @@ def _set_low_entropy_coef(trainer: TrainerSyncOnPolicy, train_cfg: Dict[str, Any
     return float(coef)
 
 
+def _set_training_curriculum_stage(trainer: TrainerSyncOnPolicy, cfg: Dict[str, Any], itr: int) -> str:
+    curriculum_cfg = dict(cfg.get("curriculum", {}))
+    if not bool(curriculum_cfg.get("enabled", False)):
+        return "full"
+
+    single_agent_no_obstacle_iters = int(curriculum_cfg.get("single_agent_no_obstacle_iters", 0))
+    if single_agent_no_obstacle_iters <= 0 or itr > single_agent_no_obstacle_iters:
+        use_single_agent_stage = False
+    else:
+        prob_start = float(curriculum_cfg.get("single_agent_no_obstacle_prob_start", 0.85))
+        prob_end = float(curriculum_cfg.get("single_agent_no_obstacle_prob_end", 0.15))
+        if single_agent_no_obstacle_iters <= 1:
+            mix_prob = prob_end
+        else:
+            alpha = min(1.0, max(0.0, float(itr - 1) / float(single_agent_no_obstacle_iters - 1)))
+            mix_prob = prob_start + (prob_end - prob_start) * alpha
+        mix_prob = float(np.clip(mix_prob, 0.0, 1.0))
+        use_single_agent_stage = bool(np.random.rand() < mix_prob)
+
+    if not hasattr(trainer, "_full_env"):
+        trainer._full_env = trainer.env  # type: ignore[attr-defined]
+        trainer._full_coordinator = trainer.coordinator  # type: ignore[attr-defined]
+        trainer._curriculum_cache = {}  # type: ignore[attr-defined]
+
+    if not use_single_agent_stage:
+        trainer.env = trainer._full_env  # type: ignore[attr-defined]
+        trainer.coordinator = trainer._full_coordinator  # type: ignore[attr-defined]
+        return "full"
+
+    cache = trainer._curriculum_cache  # type: ignore[attr-defined]
+    key = ("single_agent_no_obstacle", 1, 0)
+    if key not in cache:
+        env_cfg = dict(cfg["env"])
+        env_cfg["n_agents"] = 1
+        env_cfg["n_obstacles"] = 0
+        env_stage = MultiUAV2DEnv(**env_cfg)
+        coord_stage = SyncCoordinator(
+            num_agents=1,
+            t_sync_max=int(cfg["synchronization"]["t_sync_max"]),
+            mode=str(cfg["synchronization"].get("mode", "sync")),
+        )
+        cache[key] = (env_stage, coord_stage)
+    trainer.env, trainer.coordinator = cache[key]
+    return "single_agent_no_obstacle"
+
+
+def _restore_full_training_env(trainer: TrainerSyncOnPolicy) -> None:
+    if hasattr(trainer, "_full_env"):
+        trainer.env = trainer._full_env  # type: ignore[attr-defined]
+    if hasattr(trainer, "_full_coordinator"):
+        trainer.coordinator = trainer._full_coordinator  # type: ignore[attr-defined]
+
+
 def _extract_low_policy_state_dict(ckpt: Dict[str, Any]) -> Dict[str, torch.Tensor]:
     low = ckpt.get("low_policy")
     if isinstance(low, dict):
@@ -257,6 +310,11 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
     skill_params["action_limit"] = action_limit
     skill_params["cbf_u_max"] = action_limit
     skill_params["dt"] = float(cfg["env"]["dt"])
+    skill_params["world_size"] = float(cfg["env"]["world_size"])
+    skill_params["boundary_cbf"] = bool(cfg.get("safety", {}).get("boundary_cbf", True))
+    skill_params["boundary_margin"] = float(
+        cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.2))
+    )
     runtime = SkillRuntimeManager(
         skills,
         default_ctx=skill_params,
@@ -380,13 +438,16 @@ def main() -> None:
     video_interval = max(0, int(args.video_interval))
 
     for itr in range(1, total_iterations + 1):
+        curriculum_stage = _set_training_curriculum_stage(trainer, cfg, itr)
         high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
         low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, total_iterations)
         rollout = trainer.collect_rollout()
+        _restore_full_training_env(trainer)
         low = trainer.update_low_level()
         high = trainer.update_high_level()
         row = {
             "iteration": float(itr),
+            "curriculum_single_agent_stage": float(1.0 if curriculum_stage == "single_agent_no_obstacle" else 0.0),
             "steps_collected": float(rollout.get("steps_collected", 0.0)),
             "episode_return_mean": float(rollout.get("episode_return_mean", 0.0)),
             "safe_reach_ratio": float(rollout.get("safe_reach_ratio", 0.0)),

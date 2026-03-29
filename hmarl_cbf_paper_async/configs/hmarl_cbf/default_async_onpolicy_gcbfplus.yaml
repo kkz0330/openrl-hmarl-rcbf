@@ -20,9 +20,9 @@ env:
   min_agent_separation: 0.8
   min_obstacle_clearance: 0.4
   terminate_on_collision: true
-  reward_progress_weight: 0.35
+  reward_progress_weight: 0.5
   reward_time_penalty: 0.01
-  reward_reach_bonus: 3.0
+  reward_reach_bonus: 5.0
   reward_collision_penalty: 2.5
   reward_oob_penalty: 2.5
   initial_speed_toward_goal: 0.0
@@ -34,6 +34,8 @@ synchronization:
 safety:
   d_min_agent: 0.3
   d_safe_obs: 0.3
+  boundary_cbf: true
+  boundary_margin: 0.3
 
 skills:
   names: ["turn_left", "turn_right", "accelerate", "decelerate", "cruise"]
@@ -55,7 +57,8 @@ skills:
     accelerate_heading_blend: 0.0
     decelerate_init_min_speed: 0.1
     decelerate_target_speed: 0.05
-    decelerate_mode: zero_track
+    decelerate_delta_speed: 0.3
+    decelerate_mode: velocity_decrement
     decelerate_stop_eps: 0.05
     decelerate_kv: 1.5
     cruise_min_speed: 0.2
@@ -85,7 +88,7 @@ low_level_qp:
   h_diag_max: 50.0
   f_abs_max: 20.0
   phi_log_std_min: -5.0
-  phi_log_std_max: -0.5
+  phi_log_std_max: -1.0
   w_clf: 10.0
   w_cbf: 100.0
   cbf_slack_max: 1.0
@@ -133,9 +136,9 @@ train:
   low_ppo_clip_ratio: 0.2
   low_ppo_value_coef: 0.5
   low_ppo_entropy_coef: 0.0
-  low_ppo_entropy_coef_start: 0.002
+  low_ppo_entropy_coef_start: 0.0005
   low_ppo_entropy_coef_end: 0.0
-  low_ppo_entropy_decay_iters: 300
+  low_ppo_entropy_decay_iters: 100
   low_ppo_max_grad_norm: 0.5
   low_policy_action_std: 0.2
   low_normalize_advantages: true
@@ -149,3 +152,9 @@ buffer_postprocess:
   low_ext_reward_coef: 0.0
   low_reward_mix_eta: 0.35
   low_reward_mix_divide_by_n_agents: true
+
+curriculum:
+  enabled: true
+  single_agent_no_obstacle_iters: 200
+  single_agent_no_obstacle_prob_start: 0.85
+  single_agent_no_obstacle_prob_end: 0.15

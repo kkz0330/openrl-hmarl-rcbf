@@ -252,6 +252,11 @@ def _build_trainer(
     skill_params["action_limit"] = action_limit
     skill_params["cbf_u_max"] = action_limit
     skill_params["dt"] = float(cfg["env"]["dt"])
+    skill_params["world_size"] = float(cfg["env"]["world_size"])
+    skill_params["boundary_cbf"] = bool(cfg.get("safety", {}).get("boundary_cbf", True))
+    skill_params["boundary_margin"] = float(
+        cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.2))
+    )
     runtime = SkillRuntimeManager(skills, default_ctx=skill_params)
     low_controller = LowLevelSafeController(
         low_policy=low_policy,

@@ -257,6 +257,9 @@ def build_diff_constraint_constants(
     cbf_share_agent: float = 0.5,
     cbf_share_obs: float = 1.0,
     cbf_eps: float = 1e-4,
+    boundary_cbf: bool = False,
+    world_size: float = 0.0,
+    boundary_margin: float = 0.0,
     clf_v_des_speed: float = 0.8,
     u_min: np.ndarray | List[float] = (-1.0, -1.0),
     u_max: np.ndarray | List[float] = (1.0, 1.0),
@@ -384,6 +387,51 @@ def build_diff_constraint_constants(
             cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
             cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
             cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
+
+    if boundary_cbf and world_size > 0.0:
+        xmin = float(-world_size + boundary_margin)
+        xmax = float(world_size - boundary_margin)
+        ymin = float(-world_size + boundary_margin)
+        ymax = float(world_size - boundary_margin)
+        bounds = (
+            (0, False, xmin),
+            (0, True, xmax),
+            (1, False, ymin),
+            (1, True, ymax),
+        )
+        for axis, upper, bound in bounds:
+            pos = p_i[axis]
+            vel = v_i[axis]
+            a_row = torch.zeros((2,), dtype=dtype, device=dev)
+            if upper:
+                h0 = torch.tensor(float(bound), dtype=dtype, device=dev) - pos
+                h0_dot = -vel
+                a_row[axis] = 1.0
+            else:
+                h0 = pos - torch.tensor(float(bound), dtype=dtype, device=dev)
+                h0_dot = vel
+                a_row[axis] = -1.0
+
+            if cbf_mode == "distributed_gcbfplus":
+                A_rows.append(a_row)
+                cbf_const_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_h_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_h0_terms.append(h0)
+                cbf_h0dot_terms.append(h0_dot)
+                cbf_pv_terms.append(0.5 * h0_dot)
+                cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
+            else:
+                A_rows.append(a_row)
+                cbf_const_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_h_terms.append(h0)
+                cbf_hdot_terms.append(h0_dot)
+                cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
 
     if len(A_rows) == 0:
         A_cbf = torch.zeros((1, 2), dtype=dtype, device=dev)

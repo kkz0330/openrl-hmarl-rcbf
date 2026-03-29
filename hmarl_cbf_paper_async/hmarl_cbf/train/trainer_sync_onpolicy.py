@@ -323,6 +323,9 @@ class TrainerSyncOnPolicy:
             cbf_share_agent=float(overrides.get("cbf_share_agent", 0.5)),
             cbf_share_obs=float(overrides.get("cbf_share_obs", 1.0)),
             cbf_eps=float(overrides.get("cbf_eps", 1e-4)),
+            boundary_cbf=bool(overrides.get("boundary_cbf", False)),
+            world_size=float(overrides.get("world_size", getattr(self.env, "world_size", 0.0))),
+            boundary_margin=float(overrides.get("boundary_margin", 0.0)),
             u_min=u_min,
             u_max=u_max,
         )
@@ -483,6 +486,9 @@ class TrainerSyncOnPolicy:
             cbf_share_agent=float(overrides.get("cbf_share_agent", 0.5)),
             cbf_share_obs=float(overrides.get("cbf_share_obs", 1.0)),
             cbf_eps=float(overrides.get("cbf_eps", 1e-4)),
+            boundary_cbf=bool(overrides.get("boundary_cbf", False)),
+            world_size=float(overrides.get("world_size", getattr(self.env, "world_size", 0.0))),
+            boundary_margin=float(overrides.get("boundary_margin", 0.0)),
             u_min=u_min,
             u_max=u_max,
         )
@@ -585,6 +591,7 @@ class TrainerSyncOnPolicy:
         last_obs = obs
         terminated = False
         truncated = False
+        frozen_agents: set[int] = set()
 
         def _obs_batch(obs_map: Dict[int, Dict[str, Any]]) -> np.ndarray:
             rows = []
@@ -632,38 +639,47 @@ class TrainerSyncOnPolicy:
             states = {s.agent_id: s for s in self.env.get_agent_states()}
             option_k_before_step = {aid: int(self.coordinator.option_k[aid]) for aid in agent_ids}
             obs_low = {aid: obs[aid]["low"] for aid in agent_ids}
-            if self._is_low_update_ppo():
-                actions, control_outputs, low_step_stats = self._compute_safe_actions_for_low_ppo(
-                    states=states,
-                    obs_low=obs_low,
-                    obstacles=self.env.get_obstacles(),
-                )
-            elif self._is_low_update_deterministic():
-                actions, control_outputs = self.compute_safe_actions(
-                    states=states,
-                    obs_low=obs_low,
-                    obstacles=self.env.get_obstacles(),
-                )
-                low_step_stats = self._compute_low_values(
-                    obs_low=obs_low,
-                    skill_ids={aid: int(control_outputs[aid].skill_id) for aid in agent_ids},
-                )
-            else:
-                raise ValueError("unsupported paper subset low-level update mode")
+            active_agent_ids = [aid for aid in agent_ids if aid not in frozen_agents]
+
+            actions: Dict[int, Any] = {aid: np.zeros(2, dtype=np.float32) for aid in agent_ids}
+            control_outputs: Dict[int, Any] = {}
+            low_step_stats: Dict[int, Dict[str, Any]] = {}
+            if active_agent_ids:
+                active_states = {aid: states[aid] for aid in active_agent_ids}
+                active_obs_low = {aid: obs_low[aid] for aid in active_agent_ids}
+                if self._is_low_update_ppo():
+                    active_actions, control_outputs, low_step_stats = self._compute_safe_actions_for_low_ppo(
+                        states=active_states,
+                        obs_low=active_obs_low,
+                        obstacles=self.env.get_obstacles(),
+                    )
+                elif self._is_low_update_deterministic():
+                    active_actions, control_outputs = self.compute_safe_actions(
+                        states=active_states,
+                        obs_low=active_obs_low,
+                        obstacles=self.env.get_obstacles(),
+                    )
+                    low_step_stats = self._compute_low_values(
+                        obs_low=active_obs_low,
+                        skill_ids={aid: int(control_outputs[aid].skill_id) for aid in active_agent_ids},
+                    )
+                else:
+                    raise ValueError("unsupported paper subset low-level update mode")
+                actions.update(active_actions)
             next_obs, rewards, terminated, truncated, info = self.env.step(actions)
             next_states = {s.agent_id: s for s in self.env.get_agent_states()}
             next_obs_low = {aid: next_obs[aid]["low"] for aid in agent_ids}
             skill_out = self.skill_runtime.step_all(
-                states=next_states,
-                obs_low=next_obs_low,
-                executed_actions=actions,
-            )
-            beta = {aid: bool(skill_out[aid].beta) for aid in agent_ids}
+                states={aid: next_states[aid] for aid in active_agent_ids},
+                obs_low={aid: next_obs_low[aid] for aid in active_agent_ids},
+                executed_actions={aid: actions[aid] for aid in active_agent_ids},
+            ) if active_agent_ids else {}
+            beta = {aid: (bool(skill_out[aid].beta) if aid in skill_out else False) for aid in agent_ids}
             step_sync = self.coordinator.step(beta)
             forced_end = bool(terminated or truncated)
             switched_agents = set(step_sync.switch_agents)
             if forced_end:
-                switched_agents = set(agent_ids)
+                switched_agents = set(active_agent_ids)
 
             for aid in agent_ids:
                 unsafe = bool(info.get("unsafe_flags", {}).get(aid, False))
@@ -672,6 +688,8 @@ class TrainerSyncOnPolicy:
                 reached_any[aid] = bool(reached_any[aid] or reached)
                 done = bool(unsafe or reached or terminated or truncated)
                 done_by_agent[aid] = done
+                if aid not in active_agent_ids:
+                    continue
                 self.record_low_step(
                     LowStepTransition(
                         t=step_sync.t,
@@ -738,33 +756,47 @@ class TrainerSyncOnPolicy:
                 round_discount[aid] *= self.hooks.gamma_high
                 ep_return_ext[aid] += float(rewards[aid])
 
-            steps_collected += 1
-            last_obs = next_obs
-            obs = next_obs
+            newly_frozen = {
+                aid for aid in active_agent_ids
+                if bool(info.get("reach_flags", {}).get(aid, False))
+            }
+            if newly_frozen and hasattr(self.env, "freeze_agents"):
+                self.env.freeze_agents(sorted(newly_frozen))
+            frozen_agents.update(newly_frozen)
 
-            if len(switched_agents) > 0:
+            close_agents = set(switched_agents) | set(newly_frozen)
+            if len(close_agents) > 0:
                 t_end = self.coordinator.t
-                for aid in switched_agents:
+                for aid in close_agents:
                     if self.buffer.has_open_high_option(aid):
                         self.close_high_option(
                             agent_id=aid,
                             t_end=t_end,
                             return_ext=round_return_ext[aid],
                             done=done_by_agent[aid],
-                            sync_switch=True,
-                            info={"forced_sync": forced_end},
+                            sync_switch=bool(aid in switched_agents),
+                            info={"forced_sync": forced_end, "frozen_reached": bool(aid in newly_frozen)},
                         )
-                if forced_end:
-                    break
+                        round_return_ext[aid] = 0.0
+                        round_discount[aid] = 1.0
 
+            steps_collected += 1
+            last_obs = next_obs
+            obs = next_obs
+
+            if forced_end:
+                break
+
+            resample_agents = [aid for aid in switched_agents if aid not in frozen_agents]
+            if len(resample_agents) > 0:
                 sampled = _sample_high(obs)
                 states_round = {s.agent_id: s for s in self.env.get_agent_states()}
-                new_skills = {aid: int(sampled[aid]["skill_id"]) for aid in switched_agents}
+                new_skills = {aid: int(sampled[aid]["skill_id"]) for aid in resample_agents}
                 actual = self.activate_round_skills(
                     skill_map=new_skills,
                     states=states_round,
                 )
-                for aid in switched_agents:
+                for aid in resample_agents:
                     sid = int(actual[aid])
                     skill_counts_rollout[sid] = int(skill_counts_rollout.get(sid, 0)) + 1
                     self.start_high_option(
@@ -776,8 +808,6 @@ class TrainerSyncOnPolicy:
                         logp=float(sampled[aid]["logp"]),
                         value=float(sampled[aid]["value"]),
                     )
-                    round_return_ext[aid] = 0.0
-                    round_discount[aid] = 1.0
 
         for aid in agent_ids:
             if self.buffer.has_open_high_option(aid):
@@ -1061,9 +1091,12 @@ class TrainerSyncOnPolicy:
             agent_ids = sorted(obs.keys())
             self.skill_runtime.reset(agent_ids)
             self.coordinator.reset()
+            if hasattr(self.env, "unfreeze_all_agents"):
+                self.env.unfreeze_all_agents()
 
             reached_any = {aid: False for aid in agent_ids}
             unsafe_any = {aid: False for aid in agent_ids}
+            frozen_agents: set[int] = set()
             traj_len = {aid: 0.0 for aid in agent_ids}
             ep_return = {aid: 0.0 for aid in agent_ids}
             skill_switches = 0
@@ -1111,25 +1144,32 @@ class TrainerSyncOnPolicy:
             for _ in range(max_steps):
                 states = {s.agent_id: s for s in self.env.get_agent_states()}
                 obs_low = {aid: obs[aid]["low"] for aid in agent_ids}
-                actions, control_outputs = self.compute_safe_actions(
-                    states=states,
-                    obs_low=obs_low,
-                    obstacles=self.env.get_obstacles(),
-                )
+                active_agent_ids = [aid for aid in agent_ids if aid not in frozen_agents]
+                actions: Dict[int, Any] = {aid: np.zeros(2, dtype=np.float32) for aid in agent_ids}
+                control_outputs: Dict[int, Any] = {}
+                if active_agent_ids:
+                    active_states = {aid: states[aid] for aid in active_agent_ids}
+                    active_obs_low = {aid: obs_low[aid] for aid in active_agent_ids}
+                    active_actions, control_outputs = self.compute_safe_actions(
+                        states=active_states,
+                        obs_low=active_obs_low,
+                        obstacles=self.env.get_obstacles(),
+                    )
+                    actions.update(active_actions)
                 next_obs, rewards, terminated, truncated, info = self.env.step(actions)
                 next_states = {s.agent_id: s for s in self.env.get_agent_states()}
                 next_obs_low = {aid: next_obs[aid]["low"] for aid in agent_ids}
                 skill_out = self.skill_runtime.step_all(
-                    states=next_states,
-                    obs_low=next_obs_low,
-                    executed_actions=actions,
-                )
-                beta = {aid: bool(skill_out[aid].beta) for aid in agent_ids}
+                    states={aid: next_states[aid] for aid in active_agent_ids},
+                    obs_low={aid: next_obs_low[aid] for aid in active_agent_ids},
+                    executed_actions={aid: actions[aid] for aid in active_agent_ids},
+                ) if active_agent_ids else {}
+                beta = {aid: (bool(skill_out[aid].beta) if aid in skill_out else False) for aid in agent_ids}
                 sync_res = self.coordinator.step(beta)
                 forced_end = bool(terminated or truncated)
                 switched_agents = set(sync_res.switch_agents)
                 if forced_end:
-                    switched_agents = set(agent_ids)
+                    switched_agents = set(active_agent_ids)
                 if len(switched_agents) > 0:
                     skill_switches += int(len(switched_agents))
 
@@ -1148,8 +1188,9 @@ class TrainerSyncOnPolicy:
                     traj_len[aid] += float(np.linalg.norm(pos_new - last_pos[aid]))
                     last_pos[aid] = pos_new
 
-                    qp_total += 1
-                    qp_feasible += 1 if bool(control_outputs[aid].solution.feasible) else 0
+                    if aid in active_agent_ids:
+                        qp_total += 1
+                        qp_feasible += 1 if bool(control_outputs[aid].solution.feasible) else 0
 
                 safety_metrics = info.get("safety_metrics", {})
                 for aid in agent_ids:
@@ -1160,11 +1201,20 @@ class TrainerSyncOnPolicy:
                     min_h_obs = min(min_h_obs, float(m.min_h_obstacle))
 
                 obs = next_obs
+                newly_frozen = {
+                    aid for aid in active_agent_ids
+                    if bool(info.get("reach_flags", {}).get(aid, False))
+                }
+                if newly_frozen and hasattr(self.env, "freeze_agents"):
+                    self.env.freeze_agents(sorted(newly_frozen))
+                frozen_agents.update(newly_frozen)
+
                 if (len(switched_agents) > 0) and not (terminated or truncated):
                     sampled = _sample_high(obs)
                     states_round = {s.agent_id: s for s in self.env.get_agent_states()}
-                    new_skills = {aid: int(sampled[aid]) for aid in switched_agents}
-                    self.activate_round_skills(skill_map=new_skills, states=states_round)
+                    new_skills = {aid: int(sampled[aid]) for aid in switched_agents if aid not in frozen_agents}
+                    if new_skills:
+                        self.activate_round_skills(skill_map=new_skills, states=states_round)
                 if terminated or truncated:
                     break
 

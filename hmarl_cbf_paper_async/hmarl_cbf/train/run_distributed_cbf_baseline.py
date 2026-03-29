@@ -119,6 +119,11 @@ def main() -> None:
         scs_eps=float(cfg["qp"].get("scs_eps", 1e-4)),
     )
     baseline_cfg = DistributedCBFBaselineConfig.from_mapping(cfg["baseline"])
+    baseline_cfg.world_size = float(env_cfg["world_size"])
+    baseline_cfg.boundary_cbf = bool(cfg.get("safety", {}).get("boundary_cbf", True))
+    baseline_cfg.boundary_margin = float(
+        cfg.get("safety", {}).get("boundary_margin", env_cfg.get("agent_radius", 0.2))
+    )
     baseline = DistributedCBFBaselineController(
         constraint_builder=constraint_builder,
         qp_solver=qp_solver,

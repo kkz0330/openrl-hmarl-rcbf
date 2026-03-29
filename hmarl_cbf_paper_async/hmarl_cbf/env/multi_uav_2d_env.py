@@ -81,6 +81,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
 
         self._states: List[AgentState] = []
         self._obstacles: List[Dict[str, np.ndarray | float]] = []
+        self._frozen_agents: set[int] = set()
 
         if spaces is not None:
             self.action_space = spaces.Box(
@@ -235,6 +236,16 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
     def get_obstacles(self) -> List[Dict[str, np.ndarray | float]]:
         return [{"center": np.asarray(o["center"], dtype=np.float32).copy(), "radius": float(o["radius"])} for o in self._obstacles]
 
+    def freeze_agents(self, agent_ids: Sequence[int]) -> None:
+        for agent_id in agent_ids:
+            idx = int(agent_id)
+            if 0 <= idx < self.n_agents:
+                self._frozen_agents.add(idx)
+                self._states[idx].velocity = np.zeros(2, dtype=np.float32)
+
+    def unfreeze_all_agents(self) -> None:
+        self._frozen_agents.clear()
+
     def collision_mask(self) -> Dict[int, bool]:
         flags = {i: False for i in range(self.n_agents)}
         for i in range(self.n_agents):
@@ -306,6 +317,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         options = options or {}
         self._rng = np.random.default_rng(seed)
         self.step_count = 0
+        self._frozen_agents.clear()
         if "obstacles" in options:
             self._obstacles = self._parse_obstacles_option(options["obstacles"])  # type: ignore[arg-type]
         else:
@@ -333,6 +345,9 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         }
 
         for state in self._states:
+            if state.agent_id in self._frozen_agents:
+                state.velocity = np.zeros(2, dtype=np.float32)
+                continue
             action = np.asarray(actions.get(state.agent_id, np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
             action = np.clip(action, -self.action_limit, self.action_limit)
             state.velocity = np.clip(state.velocity + action * self.dt, -self.velocity_limit, self.velocity_limit)
@@ -370,5 +385,6 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
             "costs": costs,
             "safety_metrics": metrics,
             "step_count": self.step_count,
+            "frozen_agents": sorted(int(i) for i in self._frozen_agents),
         }
         return obs, rewards, terminated, truncated, info

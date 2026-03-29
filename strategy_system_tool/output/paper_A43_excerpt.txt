@@ -1,0 +1,413 @@
+--- PAGE 29 ---
+Algorithm 1Hierarchical Multi-Agent Reinforcement Learning with CBFs
+1:Initialize randomly the high-level policy parametersθand parametersνof the low-level policy
+parametersϕ//network parameter sharing done between agents.
+2:foreach episodedo
+3:z i
+0 ∼πHθ(z i∣oi
+0),∀i∈N// sample initial skill
+4:Set data bufferD={}
+5:fort←0, . . . , Tdo
+6:Get action for agentibased on the selected skilla i
+t =µ i(oi
+t∣zi
+t′;ϕ ν)∀i∈N// sample
+primitive action
+7:Gets t+1 andr H from environment andr i
+L∀i∈N
+8:Sample skill for agenti,z i
+t+1 ∼πi
+Hθ(z i∣oi
+t),∀i∈Nz(t)//N z(t)is the list of agents who
+have to update their skills based on termination scheme used.
+9:end for
+10:Update high level policy networkθaccording to (12), or, (13), using sampled data.
+11:Update low level policy network parametersνbased on (23) and (24), using sampled data
+12:end for
+We implement the algorithm using two different approaches inspired by existing works in the area of
+MARL. Notably, we implemented the algorithm in the following ways. It is important to note that
+under all these approaches, the hierarchical policy is learned agent-wise to allow for decentralized
+execution.
+1. Joint policy learning: This approach involves solving (11) by optimizing the high-level policies
+of the agents jointly by learning the policy parametersθ is.
+2. Group policy learning: This approach is inspired by the idea of learning the value function
+by decomposing the joint value function into the value function of groups of agents. In our
+fully cooperative setting, the total step reward can be composed as a sum of the rewards of the
+individual agents, i.e. rH(s,a)= ∑N
+i=1 ri
+H(si,a i). Let {Gj}NG
+j=1 represent the groups with each
+Gj ⊂Nsuch that, Gj∩Gj′
+=∅and N=∪NG
+i=1 Gi. We can define the group reward as the sum
+over the individual reward of the agents in the group. Then, under this approach we can express
+the objective in (11) as below (We only include the necessary symbols in the expectation to avoid
+symbol overload):
+J(π H , πz)=E
+⎡⎢⎢⎢⎢⎣
+∞
+∑
+t′=0
+Eat∼πzt′[
+kt′−1
+∑
+t=0
+γt+kt′rH(st,a t)]
+⎤⎥⎥⎥⎥⎦
+=E[
+∞
+∑
+t′=0
+Eat∼πzt′,[
+kt′−1
+∑
+t=0
+γt+kt′
+NG
+∑
+j=1
+N
+∑
+i=1
+ri
+H(si
+t,a i
+t)I[i∈Gj]
+⌟⟨⟨⟪rl⟫l⟩⟩⟪⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟨⟨⟪rl⟫m⟩⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟨⟨⟪rl⟫r⟩⟩⟩⟪
+=rGj
+H (sGj
+t ,aGj
+t )
+]]
+=
+NG
+∑
+j=1
+E[
+∞
+∑
+t′=0
+EaGj
+t ∼πzt′
+[
+kt′−1
+∑
+t=0
+rGj
+H (sGj
+t ,a Gj
+t )]](32)
+Here, sGj
+and aGj
+are the states and actions of the agents in group Gj, The agent skill policies
+are learnt independently of each other. Hence. the joint skills policies can be written as
+πz =∏N
+i=1 πzi =∏NG
+j=1∏i∈Gj πzi =∏NG
+j=1 πzGj where πzGj is the joint skills policy of the agents
+in the groupG j. Then, (32) can be written as:
+J(π H , πz)=
+NG
+∑
+j=1
+E[
+∞
+∑
+t′=0
+EaGj
+t ∼π
+zGj
+t′
+[
+kt′−1
+∑
+t=0
+rGj
+H (sGj
+t ,a Gj
+t )]]
+=J 1(π G1
+H )+⋅⋅⋅+JNG(π GNG
+H )
+where, kt′now becomes the time at which any agent in the group changes selects/switches to
+a new skill. We drop the low-level policy corresponding to skills for brevity. This approach
+29
+
+--- PAGE 30 ---
+enables better scalability as the overall problem is decomposed into one that learns policies
+for the groups; however, this comes at the expense of performance as the original optimization
+problem involves all the agents.
+Note that all these implementations retain the safety guarantee as it is offered by our safe skill-learning
+approach.
+A.4.2 Implementation Details: METADRIVE Simulator
+Metadrive environments illustrated in figure 2 by default, include 3 basic sensors: lidar, sideDetector
+and laneLineDetector which are used for detecting moving objects, sidewalks/solid lines, and bro-
+ken/solid lines respectively. The lidar state observation returns a state vector containing necessary
+information for navigation tasks. The details of the observation can be found here 2. The environ-
+mental safety constraints include i. the road boundaries and ii. the booth for tollgate environment
+only. And, each agent has to stay safe to all neighboring agents which are within the lidar sensing
+radius. It is important to mention that we only use a dynamic bicycle model for the CBF constraints,
+the environment uses pybullet physics engine for simulation. The kinematic bicycle model of the
+vehicle is provided in (33).
+˙p= vcos(ψ)
+1−dκ(p),
+˙d=vsin(ψ),
+˙ψ= v
+L tan(δ)−κ(p)˙p,
+˙v=a.
+(33)
+where p represents the position of the vehicle along the reference path, d is the lateral deviation of the
+vehicle from the reference path, ψ denotes the yaw angle of the vehicle (heading angle relative to the
+path), and v is the longitudinal velocity of the vehicle. The control inputs are δ, which is the steering
+angle, anda, which is the acceleration (or deceleration). The parameterLdenotes the wheelbase of
+the vehicle, and κ(p) is the curvature of the reference path at position s. It is important to add that,
+these states are provided by the environment for each ego vehicle/agent in its observation.
+In order to incorporate safety with respect to other agents and environmental obstacles, we define
+simple circles-based constraints as illustrated in Figure 9. And, for the road boundaries we use
+the lateral deviation from the center lane to define safety functions. Let pj and dj denote the
+distance along the path and lateral deviation of another agent j with respect to agent i, located
+within the sensing radius of agent i. This information is provided in the observation of agent i i.e.
+(di, pj, dj)∈Oi. Note that, for an ego vehicle pi is always 0 in its body frame. let ∆(pi, di, pj, dj)
+denote the euclidean distance between agent i and j respectively. Similarly, let pe and de denote the
+longitudinal and lateral distance of an environmental obstacle, like a tollgate booth, as illustrated in
+Figure 9 from agent i, and ∆(pi, di, pe, de) be the euclidean distance. Then, the safety constraints
+corresponding to other agentj, environmental constraints for an agentiare given below:
+∆(pi, di, pj, dj)2 ≥r(vi),∆(p i, di, pe, de)2 ≥e;, and∣di∣≤c(34)
+wherer(v i)is a monotonically increasing function ofv i,e∈R>0 andc∈R>0 .
+Consider the CBF for the constraint for inter-agent safety defined ash(O i)=∆(p i, di, pj, dj)−r(vi)
+where ∆(pi, di, pj, dj)=
+√
+(pi−pj)2+(d i−dj)2, then the corresponding CBF constraint is given
+by:
+2(pi−pj)( vi cos(ψ i)
+1−diκ(pi) −˙pj)+2(d i−dj)(vi sin(ψ i)−˙dj)
+⌟⟨⟨⟪rl⟫l⟩⟩⟪⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟨⟨⟪rl⟫m⟩⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟨⟨⟪rl⟫r⟩⟩⟩⟪
+Lf h(Oi)
++−2r(vi) dr(v i)
+dvi ai
+⌟⟨⟨⟪rl⟫l⟩⟩⟪⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨⟨⟪rl⟫mo⟨⌟⟪⟨
+
+--- PAGE 31 ---
+Figure 9: From left to right: illustration of i. inter agent safety constraints on another lane, ii. inter
+agent safety constraints on same lane and ii. environmental constraints.
+Additionally, we define CLFs for state reference tracking namely velocity and heading reference
+tracking. As we define termination state set corresponding to each skill, we define CLFs to drive the
+system to the termination state to be able to successfully execute the skill. However, it is important to
+note that the CLFs are not defined specific to skills and, hence, are generalized to the task. The CLFs
+corresponding to velocity and heading reference are given by the equation below. where vi
+t and vi
+tf
+are the velocities at We parameterize the corresponding CLF constraint which in case of the velocity
+and heading constraints becomes the following:
+V(v i, vi
+des)=(v i−vi
+des)2; (36)
+V(ψ i, ψi
+des)=(ψ i−ψi
+des)2 (37)
+wherev des is the desired velocity andψ des is the desired heading of the vehicle.
+Skills description.We define five skills for each agent for the METADRIVE environments which
+are: i. cruising, ii. accelerating (speed up), iii. yielding (slowing down), iv. left lane changing, and v.
+right lane changing.
+Cruising.As the name suggests, this skill causes the vehicle to move at a constant speed for a fixed
+distance. The velocity CLF constraint in (36) is incorporated in the skill QP based policy by setting
+vdes =v current wherev current is the current velocity of the vehicle.
+Accelerating/speeding upThis skill corresponds to an agent increasing its longitudinal velocity. Let
+the initial velocity at the time of the initiation of the skill bev0. The skill terminates when the velocity
+reaches vT =v 0+dv , where dv∈R>0 denotes the desired velocity increment and vT is the velocity
+of the agent at the time of termination. Hence, the vdes is set to v0+dv for this skill in the low level
+QP based skill policy. This skill facilitates timely task completion and helps avoid congestion by
+preventing agents from unnecessarily slowing down the traffic flow.
+Yielding/slowing down. Yielding.This skill enables an agent to reduce its longitudinal velocity. Let
+v0 be the velocity at skill initiation. The skill terminates when the velocity decreases to vT =v 0−dv,
+where dv∈R>0 is the desired reduction and vT is the velocity at the time of termination of the skill.
+Thus, the velocity CLF in (36) is incorporated to the QP based skill policy by setting vdes =v 0−dv
+Yielding allows agents to safely navigate dense traffic and cooperate by yielding to agents approaching
+from other directions, thereby facilitating efficient joint task completion.
+Left Lane Changing.This skill enables an agent to switch to the adjacent left lane. Let dlef t,0 denote
+the distance to the left road boundary and d0 be the lateral deviation from the center lane at the
+initiation of the skill. Let dlane denote the lane width, provided by the environment. The target
+lateral position is computed as dlef t,T =d lef t,0−dlane+d 0. We define the desired heading angle as
+a function of e i.e. ϕdes =f(e) , where e=d lef t,T−dlef t,0, and incorporate it into the CLF constraint
+on heading in (37) via a QP-based low-level skill control policy. This skill is essential for scenarios
+such as tollgates, bottlenecks, and merging zones, where adaptive lateral movement is required to
+maintain flow and avoid congestion.
+Right Lane Changing.This skill enables an agent to switch to the adjacent right lane. Let dright,0
+denote the distance to the right road boundary and d0 be the lateral deviation from the center lane at
+the initiation of the skill. Let dlane denote the lane width, provided by the environment. The target
+31
+
+--- PAGE 32 ---
+lateral position is computed as dright,T =d right,0−dlane+d 0. We define the desired heading angle
+as a function of e, i.e., ϕdes =f(e) , where e=d right,T −dright,0, and incorporate it into the CLF
+constraint on heading in (37) via a QP-based low-level skill control policy. This skill is useful in
+scenarios such as avoiding obstacles, preparing for highway exits, or facilitating merging from the
+right, enabling smoother and safer lane coordination.
+As mentioned previously we include a timeout to ensure finite time termination of the skills for
+algorithmic sanity.
+Intrinsic rewardThe intrinsic reward serves as an internal shaping signal that guides
+each agent toward desirable driving behaviors—smoothness, lane-centering, and reference-
+tracking—independently of any external task reward. By combining several negative penalties,
+the agent is discouraged from abrupt maneuvers, drifting off its lane, or deviating from its target
+speed and heading.
+ri
+L =−c1∣∣ai∣∣2−c2( vi−vdes
+vdes
+)
+2
+−c3( ψi−ψdes
+π )
+2
+−c4∣∣di∣∣2 (38)
+Where c1, c2, c3, c4, c5 are the coefficients of each terms. The intrinsic reward combines penalties on
+aggressive acceleration and steering, deviations from reference speed and heading, and lateral offset
+from the lane center, with a small forward-progress bonus. Together, these terms encourage smooth,
+centered, and efficient driving without abrupt maneuvers.
+CBF-Based Safe Skill Implementation.As described earlier, we parameterize the QP-based
+deterministic policy µ(o∣z,ϕ) for each skill z, as detailed in Section 5.2. The QP formulation
+is parameterized through the objective, as well as the CBF and CLF constraints. In particular, we
+introduce parameters for the class-K function in the CBF constraint, the shape and size of the circular
+safety regions, and the convergence rate of the CLF constraint. To ensure validity, all parameters are
+constrained to be nonnegative using box constraints of the form(0, ϕH], where ϕH is a fixed upper
+bound applied uniformly across all parameters.
+A.4.3 Implementation Details: Lidar Suite Simulator
+Target.Agents dynamics in this environment are governed by double integrator dynamics with
+continuous-time states xi =[p i
+x, pi
+y, vi
+x, vi
+y]⊺∈R4, where pi =[p i
+x, pi
+y]⊺∈R2 denotes position and
+vi =[v i
+x, vi
+y]⊺∈R2 denotes velocity; control inputs ui =[a i
+x, ai
+y]⊺∈R2 represent accelerations
+along the Cartesian axes, and the agent dynamics follow ˙xi =[v i
+x, vi
+y, ai
+x, ai
+y]⊺, with velocity and
+control constraints bounded in[−10,10]and[−1,1]respectively.
+Spread.The underlying dynamics, state representation, control parametrization, and bounds are
+identical to those in the Target environment,i.e., agents evolve under double integrator dynamics
+with four-dimensional state vectors comprising positions and velocities, and two-dimensional control
+inputs that modulate accelerations; the bounded constraints on velocities and controls likewise remain
+[−10,10]and[−1,1], respectively.
+Target BicycleIn the Target Bicycle environment, agents dynamics are modeled using a bicy-
+cle model where the state vector xi =[p i
+x, pi
+y,cosθ i,sinθ i, vi]⊺∈R5 encapsulates the agent’s
+position, heading orientation via its sine and cosine, and scalar speed; the control input ui =
+[δi, ai]⊺includes the steering angle δi and linear acceleration ai, with dynamics specified as
+˙xi =[vcosθ, vsinθ,−vsinθtanδ, vcosθtanδ, a] ⊺, where v∈[−10,10]and δ∈[−1.47,1.47]
+are the admissible bounds on speed and steering angle.
+Similar to the METADRIVE environments, we define CBFs based on distance/proximity as in
+(34). In our formulation, we do not employ a separate heading CLF; instead, we regulate agent
+behavior using only the velocity CLF by aligning the desired velocity vector with the desired heading
+direction. Specifically, given a desired heading direction θdes, we compute a target velocity vector
+as vdes =v mag[cos(θdes),sin(θ des)]⊺, where vmag is a task-specific magnitude (e.g., maximum safe
+speed or adaptive goal-directed speed). This vdes is then used in the velocity CLF described below to
+guide both the speed and heading behavior of the agent.
+For the Target and Spread environments, where the agent’s longitudinal and lateral velocitiesvi
+x, vi
+y
+are explicit components of the state, we define the Control Lyapunov Function (CLF) to track a
+32
+
+--- PAGE 33 ---
+desired velocity vectorv des =[v x,des, vy,des]⊺∈R2 as:
+V(v i
+x, vi
+y)= 1
+2 ((v i
+x−vx,des)2+(v i
+y−vy,des)2) .
+Given the double integrator dynamics, where the control inputs ai
+x and ai
+y directly affect the velocity
+via˙vi
+x =a i
+x and˙vi
+y =a i
+y, the time derivative of the CLF becomes:
+˙V=(v i
+x−vx,des)ai
+x+(v i
+y−vy,des)ai
+y.
+To enforce convergence, we include the following CLF constraint in the QP:
+(v i
+x−vx,des)ai
+x+(v i
+y−vy,des)ai
+y ≤−α((v i
+x−vx,des)2+(v i
+y−vy,des)2) ,
+whereα>0is a tunable rate parameter.
+In the Target Bicycle environment, each agent’s velocity is represented as a scalar speedvi ∈R, and
+the longitudinal acceleration ai ∈Rserves as the control input directly affecting the speed via ˙vi =a i.
+To drivev i to a desired speedv des ∈R, we define the CLF as:
+V(v i)= 1
+2(v i−vdes)2.
+The time derivative of this CLF, using˙vi =a i, is:
+˙V=(v i−vdes)ai.
+To enforce convergence of the velocity to the target, the following CLF constraint is imposed in the
+QP:
+(v i−vdes)ai ≤−α(vi−vdes)2,
+whereα>0is a tunable parameter determining the exponential rate of convergence.
+Skills Description.We define four interpretable low-level skills for each agent in the LiDAR suite
+environments, which are: i. speeding up, ii. slowing down, iii. turning left, and iv. turning right.
+Speeding Up.This skill allows an agent to increase its translational velocity to navigate more
+efficiently through open space or move rapidly towards its assigned goal. Let the velocity at the start
+of the skill be v0 ∈R2; the skill is considered complete once the velocity reaches vT =v 0+∆v ,
+where ∆v∈R2, with ∥∆v∥>0. The CLF constraint associated with velocity tracking is enforced
+by setting the desired velocity vdes =v 0+∆v in the QP-based low-level control policy. This skill
+facilitates faster progression in low-density scenarios while maintaining safety guarantees via CBFs.
+Slowing Down.This skill enables the agent to reduce its speed when approaching dynamic obstacles,
+other agents, or goal regions where precise navigation is required. Let the initial velocity be v0 ∈R2,
+and define the skill termination condition as reaching vT =v 0−∆v, where ∆v∈R2 and ∥∆v∥>0.
+To enforce this behavior, the velocity CLF is specified usingvdes =v 0−∆v. This skill is critical for
+smooth and safe deceleration, reducing the risk of collisions and improving maneuverability near
+goals.
+Turning Left.This skill enables the agent to redirect its heading counterclockwise to avoid obstacles
+or navigate toward an alternate subgoal. Let the initial heading be θ0, and the desired heading be
+θdes =θ 0+∆θ , where ∆θ>0 . Instead of using a heading CLF, we convert the desired heading into a
+velocity vector using a fixed target magnitudevmag, and set vdes =v mag[cos(θdes),sin(θ des)]⊺. This
+desired velocity is then tracked via the standard velocity CLF in the QP. The turning-left skill is
+useful for curvature adjustment in cluttered or multi-agent scenes.
+Turning Right.This skill enables clockwise heading correction using the same velocity CLF formula-
+tion. Given initial heading θ0 and desired adjustment ∆θ>0 , the target heading is θdes =θ 0−∆θ,
+which is converted to a velocity vector as vdes =v mag[cos(θdes),sin(θ des)]⊺. The agent’s translational
+motion is then regulated by the velocity CLF, enforcing convergence to the desired heading direction
+through velocity tracking. This skill is particularly effective in obstacle-rich or conflicting zones
+where sharp directional changes are required.
+33
+
+--- PAGE 34 ---
+Figure 10: Visualization of agents’ trajectories under the trained model: for each vehicle, its ten most
+recent positions are shown in a unique hue, with brightness fading from light (earlier points) to dark
+(later points) to indicate temporal progression.
+Figure 11: Visualization of skills under the trained model. From left to right: (a) acceleration
+(speed-up), (b) yielding (slow-down), and (c) lane changing
+A.5 Additional Results
+Here, we present results to further demonstrate the merit of our proposed algorithm. Specifically, we
+examine the trajectories in detail to analyze the distinct skills exhibited by the agents, offering insight
+into how our method sustains an extremely high success rate while also outperforming the baselines
+in terms of energy efficiency and episode duration. To this end, we employ a visualization scheme in
+which each agent’s ten most recent positions are depicted in a distinct color, with brightness gradually
+diminishing from light (earlier points) to dark (later points) to convey temporal progression. An
+example of this visualization is depicted in Figure 10. By looking more closely, we can identify
+some of the skills that the agents exhibit during the episode. For instance, as agents approach their
+destinations (i.e., exit points of the environment), they execute speed up skill only when safety
+constraints are satisfied, thereby enhancing road throughput and reducing average travel time. Several
+such examples are shown in Figure 11a. Yielding (i.e., controlled slow down/deceleration) is another
+common skill agents employ to maintain a safe distance from other vehicles. By anticipating the need
+to yield, agents avoid abrupt braking, which both enhances safety and reduces overall episode energy
+consumption. Several such examples are shown in Figure 11b. Another skill exhibited by agents
+is lane changing: when executed safely at appropriate locations, it enhances road throughput and
+consequently reduces the average episode duration. An example of such lane changing is depicted in
+11c where the agent with brown color is changing its lane— creating a safe gap into which the grey
+agent then merges onto the main road.
+34

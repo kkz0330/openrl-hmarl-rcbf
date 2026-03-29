@@ -30,6 +30,8 @@ env:
 safety:
   d_min_agent: 0.3
   d_safe_obs: 0.3
+  boundary_cbf: true
+  boundary_margin: 0.3
 
 qp:
   use_stub_if_unavailable: true

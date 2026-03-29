@@ -18,8 +18,10 @@ except ImportError as exc:  # pragma: no cover - runtime entrypoint
 from hmarl_cbf.train.run_sync_onpolicy import (
     _build_trainer,
     _make_run_dir,
+    _restore_full_training_env,
     _seed_all,
     _set_high_entropy_coef,
+    _set_training_curriculum_stage,
     _set_low_entropy_coef,
     _write_history_csv,
 )
@@ -87,13 +89,16 @@ def main() -> None:
     video_interval = max(0, int(args.video_interval))
 
     for itr in range(1, total_iterations + 1):
+        curriculum_stage = _set_training_curriculum_stage(trainer, cfg, itr)
         high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
         low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, total_iterations)
         rollout = trainer.collect_rollout()
+        _restore_full_training_env(trainer)
         low = trainer.update_low_level()
         high = trainer.update_high_level()
         row = {
             "iteration": float(itr),
+            "curriculum_single_agent_stage": float(1.0 if curriculum_stage == "single_agent_no_obstacle" else 0.0),
             "steps_collected": float(rollout.get("steps_collected", 0.0)),
             "episode_return_mean": float(rollout.get("episode_return_mean", 0.0)),
             "safe_reach_ratio": float(rollout.get("safe_reach_ratio", 0.0)),

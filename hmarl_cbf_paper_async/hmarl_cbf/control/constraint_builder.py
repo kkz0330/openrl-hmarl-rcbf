@@ -48,6 +48,9 @@ class ConstraintBuilder:
         cbf_share_agent = float(overrides.get("cbf_share_agent", 0.5))
         cbf_share_obs = float(overrides.get("cbf_share_obs", 1.0))
         cbf_eps = float(overrides.get("cbf_eps", 1e-4))
+        boundary_cbf = bool(overrides.get("boundary_cbf", False))
+        world_size = float(overrides.get("world_size", 0.0))
+        boundary_margin = float(overrides.get("boundary_margin", 0.0))
 
         A_cbf_rows: List[np.ndarray] = []
         b_cbf_rows: List[float] = []
@@ -140,6 +143,36 @@ class ConstraintBuilder:
             b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
             A_cbf_rows.append(a_row)
             b_cbf_rows.append(float(b_row))
+
+        if boundary_cbf and world_size > 0.0:
+            xmin = -world_size + boundary_margin
+            xmax = world_size - boundary_margin
+            ymin = -world_size + boundary_margin
+            ymax = world_size - boundary_margin
+            for axis, upper in ((0, False), (0, True), (1, False), (1, True)):
+                pos = float(state_i.position[axis])
+                vel = float(state_i.velocity[axis])
+                if upper:
+                    h0 = float((xmax if axis == 0 else ymax) - pos)
+                    h0_dot = float(-vel)
+                    a_row = np.zeros((2,), dtype=np.float32)
+                    a_row[axis] = 1.0
+                else:
+                    h0 = float(pos - (xmin if axis == 0 else ymin))
+                    h0_dot = float(vel)
+                    a_row = np.zeros((2,), dtype=np.float32)
+                    a_row[axis] = -1.0
+
+                if cbf_mode == "distributed_gcbfplus":
+                    alpha0 = k0 * hocbf_gamma_h
+                    alpha1 = k1 * hocbf_gamma_hdot
+                    h1 = h0_dot + alpha0 * h0
+                    lf_h1 = alpha0 * h0_dot
+                    b_row = lf_h1 + alpha1 * h1
+                else:
+                    b_row = (k1 * hocbf_gamma_hdot) * h0_dot + (k0 * hocbf_gamma_h) * h0
+                A_cbf_rows.append(a_row)
+                b_cbf_rows.append(float(b_row))
 
         if A_cbf_rows:
             A_cbf = np.stack(A_cbf_rows, axis=0).astype(np.float32)
