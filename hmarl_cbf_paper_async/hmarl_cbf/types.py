@@ -175,6 +175,7 @@ class LowStepTransition:
     agent_id: int
     obs_low: AgentObsLow
     skill_id: int
+    option_k: int
     action: np.ndarray
     reward_int: float
     reward_ext: float

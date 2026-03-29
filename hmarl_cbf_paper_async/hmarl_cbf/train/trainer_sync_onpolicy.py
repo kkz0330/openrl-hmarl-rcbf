@@ -33,6 +33,8 @@ class TrainerHooks:
     lam_high: float = 0.95
     gamma_low: float = 0.99
     low_ext_reward_coef: float = 0.0
+    low_reward_mix_eta: float = 0.0
+    low_reward_mix_divide_by_n_agents: bool = True
     low_update_epochs: int = 1
     low_max_samples_per_iter: int = 256
     low_target_step_scale: float = 0.05
@@ -524,6 +526,8 @@ class TrainerSyncOnPolicy:
         lam_high: float = 0.95,
         gamma_low: float = 0.99,
         low_ext_reward_coef: float = 0.0,
+        low_reward_mix_eta: float = 0.0,
+        low_reward_mix_divide_by_n_agents: bool = True,
         bootstrap_value_by_agent: Dict[int, float] | None = None,
     ) -> Dict[str, float]:
         high_stats = self.buffer.compute_high_advantages(
@@ -532,10 +536,15 @@ class TrainerSyncOnPolicy:
             use_gae=True,
             bootstrap_value_by_agent=bootstrap_value_by_agent,
         )
+        high_adv_by_option = self.buffer.high_advantages_by_option()
         low_stats = self.buffer.compute_low_returns(
             gamma=gamma_low,
             ext_reward_coef=low_ext_reward_coef,
             reset_on_sync_switch=True,
+            reward_mix_eta=low_reward_mix_eta,
+            high_adv_by_option=high_adv_by_option,
+            divide_high_adv_by_n_agents=low_reward_mix_divide_by_n_agents,
+            n_agents=int(getattr(self.env, "n_agents", 1)),
         )
         return {
             "high_n": high_stats["n_samples"],
@@ -544,6 +553,8 @@ class TrainerSyncOnPolicy:
             "low_n": low_stats["n_samples"],
             "low_return_mean": low_stats["return_mean"],
             "low_adv_mean": low_stats["adv_mean"],
+            "low_reward_mix_mean": low_stats["reward_mix_mean"],
+            "low_high_adv_mix_mean": low_stats["high_adv_mix_mean"],
         }
 
     def collect_rollout(self) -> Dict[str, float]:
@@ -619,6 +630,7 @@ class TrainerSyncOnPolicy:
         steps_collected = 0
         for _ in range(self.hooks.rollout_steps):
             states = {s.agent_id: s for s in self.env.get_agent_states()}
+            option_k_before_step = {aid: int(self.coordinator.option_k[aid]) for aid in agent_ids}
             obs_low = {aid: obs[aid]["low"] for aid in agent_ids}
             if self._is_low_update_ppo():
                 actions, control_outputs, low_step_stats = self._compute_safe_actions_for_low_ppo(
@@ -666,6 +678,7 @@ class TrainerSyncOnPolicy:
                         agent_id=aid,
                         obs_low=obs_low[aid],
                         skill_id=int(skill_out[aid].skill_id),
+                        option_k=int(option_k_before_step[aid]),
                         action=np.asarray(actions[aid], dtype=np.float32).reshape(2),
                         reward_int=float(skill_out[aid].intrinsic_reward),
                         reward_ext=float(rewards[aid]),
@@ -791,6 +804,8 @@ class TrainerSyncOnPolicy:
             lam_high=self.hooks.lam_high,
             gamma_low=self.hooks.gamma_low,
             low_ext_reward_coef=self.hooks.low_ext_reward_coef,
+            low_reward_mix_eta=self.hooks.low_reward_mix_eta,
+            low_reward_mix_divide_by_n_agents=self.hooks.low_reward_mix_divide_by_n_agents,
             bootstrap_value_by_agent=bootstrap,
         )
         n_agents = max(1, len(agent_ids))

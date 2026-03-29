@@ -267,6 +267,8 @@ def _build_trainer(
         lam_high=float(cfg["train"]["lam_high"]),
         gamma_low=float(cfg["train"]["gamma_low"]),
         low_ext_reward_coef=float(cfg["train"]["low_ext_reward_coef"]),
+        low_reward_mix_eta=float(cfg["train"].get("low_reward_mix_eta", 0.0)),
+        low_reward_mix_divide_by_n_agents=bool(cfg["train"].get("low_reward_mix_divide_by_n_agents", True)),
         low_update_epochs=int(cfg["train"]["low_update_epochs"]),
         low_max_samples_per_iter=int(cfg["train"]["low_max_samples_per_iter"]),
         low_target_step_scale=float(cfg["train"]["low_target_step_scale"]),

@@ -118,6 +118,20 @@ def _set_high_entropy_coef(trainer: TrainerSyncOnPolicy, train_cfg: Dict[str, An
     return float(coef)
 
 
+def _set_low_entropy_coef(trainer: TrainerSyncOnPolicy, train_cfg: Dict[str, Any], itr: int, total_iterations: int) -> float:
+    default_coef = float(trainer.hooks.low_ppo_entropy_coef)
+    start = float(train_cfg.get("low_ppo_entropy_coef_start", default_coef))
+    end = float(train_cfg.get("low_ppo_entropy_coef_end", train_cfg.get("low_ppo_entropy_coef", start)))
+    decay_iters = max(1, int(train_cfg.get("low_ppo_entropy_decay_iters", total_iterations)))
+    if decay_iters <= 1:
+        coef = end
+    else:
+        alpha = min(1.0, max(0.0, float(itr - 1) / float(decay_iters - 1)))
+        coef = start + (end - start) * alpha
+    trainer.hooks.low_ppo_entropy_coef = float(coef)
+    return float(coef)
+
+
 def _extract_low_policy_state_dict(ckpt: Dict[str, Any]) -> Dict[str, torch.Tensor]:
     low = ckpt.get("low_policy")
     if isinstance(low, dict):
@@ -261,6 +275,8 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         lam_high=float(cfg["train"]["lam_high"]),
         gamma_low=float(cfg["train"]["gamma_low"]),
         low_ext_reward_coef=float(cfg["train"]["low_ext_reward_coef"]),
+        low_reward_mix_eta=float(cfg["train"].get("low_reward_mix_eta", 0.0)),
+        low_reward_mix_divide_by_n_agents=bool(cfg["train"].get("low_reward_mix_divide_by_n_agents", True)),
         low_update_epochs=int(cfg["train"]["low_update_epochs"]),
         low_max_samples_per_iter=int(cfg["train"]["low_max_samples_per_iter"]),
         low_target_step_scale=float(cfg["train"]["low_target_step_scale"]),
@@ -365,6 +381,7 @@ def main() -> None:
 
     for itr in range(1, total_iterations + 1):
         high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
+        low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, total_iterations)
         rollout = trainer.collect_rollout()
         low = trainer.update_low_level()
         high = trainer.update_high_level()
@@ -378,6 +395,7 @@ def main() -> None:
             "high_div_bonus_mean": float(rollout.get("high_div_bonus_mean", 0.0)),
             "conv_eval_success_delta_w5": float("nan"),
             "high_entropy_coef": float(high_entropy_coef),
+            "low_entropy_coef": float(low_entropy_coef),
             "high_samples": float(rollout.get("high_samples", 0.0)),
             "low_samples": float(rollout.get("low_samples", 0.0)),
             "loss_high_total": float(high.get("loss_total", 0.0)),

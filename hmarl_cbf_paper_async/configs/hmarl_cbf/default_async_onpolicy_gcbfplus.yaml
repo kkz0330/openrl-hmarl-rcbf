@@ -85,7 +85,7 @@ low_level_qp:
   h_diag_max: 50.0
   f_abs_max: 20.0
   phi_log_std_min: -5.0
-  phi_log_std_max: 1.0
+  phi_log_std_max: -0.5
   w_clf: 10.0
   w_cbf: 100.0
   cbf_slack_max: 1.0
@@ -123,6 +123,8 @@ train:
   lam_high: 0.95
   gamma_low: 0.99
   low_ext_reward_coef: 0.0
+  low_reward_mix_eta: 0.35
+  low_reward_mix_divide_by_n_agents: true
   low_update_mode: onpolicy_ppo
   low_update_epochs: 1
   low_max_samples_per_iter: 256
@@ -131,6 +133,9 @@ train:
   low_ppo_clip_ratio: 0.2
   low_ppo_value_coef: 0.5
   low_ppo_entropy_coef: 0.0
+  low_ppo_entropy_coef_start: 0.002
+  low_ppo_entropy_coef_end: 0.0
+  low_ppo_entropy_decay_iters: 300
   low_ppo_max_grad_norm: 0.5
   low_policy_action_std: 0.2
   low_normalize_advantages: true
@@ -142,3 +147,5 @@ buffer_postprocess:
   lam_high: 0.95
   gamma_low: 0.99
   low_ext_reward_coef: 0.0
+  low_reward_mix_eta: 0.35
+  low_reward_mix_divide_by_n_agents: true

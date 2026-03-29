@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from hmarl_cbf.types import HighOptionTransition, LowStepTransition
 
@@ -117,6 +117,12 @@ class HierRolloutBuffer:
             out[agent_id].sort(key=lambda x: (x.k, x.t_start))
         return out
 
+    def high_advantages_by_option(self) -> Dict[Tuple[int, int], float]:
+        out: Dict[Tuple[int, int], float] = {}
+        for tr in self.high_options:
+            out[(int(tr.agent_id), int(tr.k))] = float(tr.advantage if tr.advantage is not None else 0.0)
+        return out
+
     def low_by_agent(self) -> Dict[int, List[LowStepTransition]]:
         out: Dict[int, List[LowStepTransition]] = {}
         for tr in self.low_steps:
@@ -190,18 +196,34 @@ class HierRolloutBuffer:
         gamma: float = 0.99,
         ext_reward_coef: float = 0.0,
         reset_on_sync_switch: bool = True,
+        reward_mix_eta: float = 0.0,
+        high_adv_by_option: Dict[Tuple[int, int], float] | None = None,
+        divide_high_adv_by_n_agents: bool = True,
+        n_agents: int = 1,
     ) -> Dict[str, float]:
+        high_adv_by_option = dict(high_adv_by_option or {})
         by_agent = self.low_by_agent()
         n = 0
         ret_vals: List[float] = []
         adv_vals: List[float] = []
+        mix_vals: List[float] = []
+        high_mix_vals: List[float] = []
+
+        eta = float(max(0.0, min(1.0, reward_mix_eta)))
+        denom = float(max(1, n_agents)) if divide_high_adv_by_n_agents else 1.0
 
         for _, seq in by_agent.items():
             running = 0.0
             for tr in reversed(seq):
                 if tr.done or (reset_on_sync_switch and tr.sync_switch):
                     running = 0.0
-                reward = float(tr.reward_int) + float(ext_reward_coef) * float(tr.reward_ext)
+                high_adv = float(high_adv_by_option.get((int(tr.agent_id), int(tr.option_k)), 0.0))
+                high_term = high_adv / denom
+                reward = (
+                    eta * high_term
+                    + (1.0 - eta) * float(tr.reward_int)
+                    + float(ext_reward_coef) * float(tr.reward_ext)
+                )
                 running = reward + gamma * running
                 tr.return_target = float(running)
                 if tr.value is not None:
@@ -210,12 +232,22 @@ class HierRolloutBuffer:
                     tr.advantage = float(running)
                 ret_vals.append(float(tr.return_target))
                 adv_vals.append(float(tr.advantage))
+                mix_vals.append(float(reward))
+                high_mix_vals.append(float(high_term))
                 n += 1
 
         if n == 0:
-            return {"n_samples": 0.0, "return_mean": 0.0, "adv_mean": 0.0}
+            return {
+                "n_samples": 0.0,
+                "return_mean": 0.0,
+                "adv_mean": 0.0,
+                "reward_mix_mean": 0.0,
+                "high_adv_mix_mean": 0.0,
+            }
         return {
             "n_samples": float(n),
             "return_mean": float(sum(ret_vals) / len(ret_vals)),
             "adv_mean": float(sum(adv_vals) / len(adv_vals)),
+            "reward_mix_mean": float(sum(mix_vals) / len(mix_vals)),
+            "high_adv_mix_mean": float(sum(high_mix_vals) / len(high_mix_vals)),
         }

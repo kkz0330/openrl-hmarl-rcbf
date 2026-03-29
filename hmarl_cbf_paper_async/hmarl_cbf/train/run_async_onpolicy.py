@@ -20,6 +20,7 @@ from hmarl_cbf.train.run_sync_onpolicy import (
     _make_run_dir,
     _seed_all,
     _set_high_entropy_coef,
+    _set_low_entropy_coef,
     _write_history_csv,
 )
 
@@ -87,6 +88,7 @@ def main() -> None:
 
     for itr in range(1, total_iterations + 1):
         high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
+        low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, total_iterations)
         rollout = trainer.collect_rollout()
         low = trainer.update_low_level()
         high = trainer.update_high_level()
@@ -100,6 +102,7 @@ def main() -> None:
             "high_div_bonus_mean": float(rollout.get("high_div_bonus_mean", 0.0)),
             "conv_eval_success_delta_w5": float("nan"),
             "high_entropy_coef": float(high_entropy_coef),
+            "low_entropy_coef": float(low_entropy_coef),
             "high_samples": float(rollout.get("high_samples", 0.0)),
             "low_samples": float(rollout.get("low_samples", 0.0)),
             "loss_high_total": float(high.get("loss_total", 0.0)),

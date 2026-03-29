@@ -19,15 +19,15 @@ env:
   min_agent_separation: 0.8
   min_obstacle_clearance: 0.4
   terminate_on_collision: true
-  reward_progress_weight: 0.35
-  reward_time_penalty: 0.02
-  reward_reach_bonus: 3.0
-  reward_collision_penalty: 5.0
-  reward_oob_penalty: 12.0
+  reward_progress_weight: 0.2
+  reward_time_penalty: 0.01
+  reward_reach_bonus: 1.0
+  reward_collision_penalty: 1.0
+  reward_oob_penalty: 1.0
   initial_speed_toward_goal: 0.0
 synchronization:
   mode: async
-  t_sync_max: 20
+  t_sync_max: 10
 safety:
   d_min_agent: 0.3
   d_safe_obs: 0.3
@@ -38,28 +38,30 @@ skills:
   - accelerate
   - decelerate
   - cruise
-  default_max_duration: 20
+  default_max_duration: 10
   params:
     goal_threshold: 0.3
     goal_speed_threshold: 0.1
     action_limit: 2.0
     turn_min_speed: 0.2
     turn_target_angle: 0.6
-    turn_heading_tol: 0.2
+    turn_heading_tol: 0.1
     turn_keep_speed: false
     turn_vmag: 1.1
     turn_track_kp: 2.0
     target_speed: 1.4
-    accelerate_mode: hmarl_like
-    accelerate_delta_speed: 0.2
+    accelerate_mode: velocity_increment
+    accelerate_delta_speed: 0.3
+    accelerate_stop_eps: 0.05
     accelerate_heading_blend: 0.0
-    decelerate_delta_speed: 0.2
     decelerate_init_min_speed: 0.1
-    decelerate_mode: hmarl_like
+    decelerate_target_speed: 0.05
+    decelerate_mode: zero_track
     decelerate_stop_eps: 0.05
     decelerate_kv: 1.5
+    cruise_min_speed: 0.2
     ref_speed: 1.2
-    slow_radius: 0.5
+    slow_radius: 1.5
     goal_stop_min_speed: 0.0
     d_min_agent: 0.3
     d_safe_obs: 0.3
@@ -71,22 +73,18 @@ skills:
     w_turn: 0.03
     w_speed_dev: 0.04
     w_heading_dev: 0.02
-    w_progress: 0.06
-    w_accel_target: 0.01
-    w_goal_dist_pen: 0.12
-    accelerate_step: 2.0
-    decelerate_step: 2.0
+    w_progress: 0.02
+    w_goal_dist_pen: 0.02
 model:
   high_hidden_dim: 128
   low_hidden_dim: 128
   action_dim: 2
-
 low_level_qp:
   h_diag_min: 0.01
   h_diag_max: 50.0
   f_abs_max: 20.0
   phi_log_std_min: -5.0
-  phi_log_std_max: -0.5
+  phi_log_std_max: 1.0
   w_clf: 10.0
   w_cbf: 100.0
   cbf_slack_max: 1.0
@@ -113,12 +111,15 @@ train:
   high_entropy_coef_start: 0.05
   high_entropy_coef_end: 0.01
   high_entropy_decay_iters: 700
+  goal_visibility_reward: 0.02
+  goal_visibility_improvement_reward: 0.3
+  goal_heading_alignment_penalty: 0.0
   team_success_bonus: 2.0
   gamma_high: 0.99
   lam_high: 0.95
   gamma_low: 0.99
-  low_ext_reward_coef: 0.2
-  low_reward_mix_eta: 0.35
+  low_ext_reward_coef: 0.0
+  low_reward_mix_eta: 0.2
   low_reward_mix_divide_by_n_agents: true
   low_update_mode: onpolicy_ppo
   low_update_epochs: 1
@@ -128,9 +129,6 @@ train:
   low_ppo_clip_ratio: 0.2
   low_ppo_value_coef: 0.5
   low_ppo_entropy_coef: 0.0
-  low_ppo_entropy_coef_start: 0.002
-  low_ppo_entropy_coef_end: 0.0
-  low_ppo_entropy_decay_iters: 300
   low_ppo_max_grad_norm: 0.5
   low_policy_action_std: 0.2
   low_normalize_advantages: true
@@ -140,6 +138,6 @@ buffer_postprocess:
   gamma_high: 0.99
   lam_high: 0.95
   gamma_low: 0.99
-  low_ext_reward_coef: 0.2
-  low_reward_mix_eta: 0.35
+  low_ext_reward_coef: 0.0
+  low_reward_mix_eta: 0.2
   low_reward_mix_divide_by_n_agents: true
