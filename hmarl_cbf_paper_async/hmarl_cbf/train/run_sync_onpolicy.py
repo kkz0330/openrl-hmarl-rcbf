@@ -141,7 +141,8 @@ def _warmstart_low_policy_hfg(
     target = low_policy.state_dict()
 
     prefixes = [
-        "r_diag_head.",
+        "phi_mu_head.",
+        "phi_log_std_head.",
     ]
     if include_backbone:
         prefixes.extend(
@@ -201,6 +202,19 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         n_skills=n_skills,
         action_dim=int(cfg["model"]["action_dim"]),
         hidden_dim=int(cfg["model"]["low_hidden_dim"]),
+        h_diag_min=float(cfg.get("low_level_qp", {}).get("h_diag_min", 1e-2)),
+        h_diag_max=float(cfg.get("low_level_qp", {}).get("h_diag_max", 50.0)),
+        f_abs_max=float(cfg.get("low_level_qp", {}).get("f_abs_max", 20.0)),
+        phi_log_std_min=float(cfg.get("low_level_qp", {}).get("phi_log_std_min", -5.0)),
+        phi_log_std_max=float(cfg.get("low_level_qp", {}).get("phi_log_std_max", 1.0)),
+        w_clf=float(cfg.get("low_level_qp", {}).get("w_clf", 10.0)),
+        w_cbf=float(cfg.get("low_level_qp", {}).get("w_cbf", 100.0)),
+        cbf_slack_max=float(cfg.get("low_level_qp", {}).get("cbf_slack_max", 1.0)),
+        cbf_k0=float(cfg.get("low_level_qp", {}).get("cbf_k0", 1.0)),
+        cbf_k1=float(cfg.get("low_level_qp", {}).get("cbf_k1", 1.0)),
+        clf_k=float(cfg.get("low_level_qp", {}).get("clf_k", 1.0)),
+        hocbf_gamma_h=float(cfg.get("low_level_qp", {}).get("hocbf_gamma_h", 1.0)),
+        hocbf_gamma_hdot=float(cfg.get("low_level_qp", {}).get("hocbf_gamma_hdot", 1.0)),
     )
 
     high_opt = torch.optim.Adam(high_policy.parameters(), lr=3e-4)
@@ -237,7 +251,6 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         low_policy=low_policy,
         constraint_builder=constraint_builder,
         qp_solver=qp_solver,
-        skill_ref_weight=0.7,
         neighbor_perception_radius=float(cfg["env"]["neighbor_radius"]),
         obstacle_perception_range=float(cfg["env"]["lidar_range"]),
     )
@@ -251,7 +264,7 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         low_update_epochs=int(cfg["train"]["low_update_epochs"]),
         low_max_samples_per_iter=int(cfg["train"]["low_max_samples_per_iter"]),
         low_target_step_scale=float(cfg["train"]["low_target_step_scale"]),
-        low_update_mode=str(cfg["train"].get("low_update_mode", "target_regression")),
+        low_update_mode=str(cfg["train"].get("low_update_mode", "deterministic_diff")),
         low_ppo_epochs=int(cfg["train"].get("low_ppo_epochs", cfg["train"].get("low_update_epochs", 2))),
         low_ppo_clip_ratio=float(cfg["train"].get("low_ppo_clip_ratio", 0.2)),
         low_ppo_value_coef=float(cfg["train"].get("low_ppo_value_coef", 0.5)),
@@ -259,6 +272,9 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         low_ppo_max_grad_norm=float(cfg["train"].get("low_ppo_max_grad_norm", 0.5)),
         low_policy_action_std=float(cfg["train"].get("low_policy_action_std", 0.2)),
         low_normalize_advantages=bool(cfg["train"].get("low_normalize_advantages", True)),
+        low_deterministic_value_coef=float(cfg["train"].get("low_deterministic_value_coef", cfg["train"].get("low_ppo_value_coef", 0.5))),
+        low_deterministic_slack_coef=float(cfg["train"].get("low_deterministic_slack_coef", 0.02)),
+        low_deterministic_cbf_slack_coef=float(cfg["train"].get("low_deterministic_cbf_slack_coef", 0.05)),
         eval_episodes=int(eval_episodes),
         eval_deterministic=bool(deterministic_eval),
         eval_render=False,
@@ -399,10 +415,9 @@ def main() -> None:
                 f"ret={row['episode_return_mean']:.4f} "
                 f"safe={row['safe_reach_ratio']:.4f} "
                 f"skillH={row['skill_entropy_norm']:.4f} "
-                f"top1={row['top1_skill_ratio']:.4f} "
-                f"succ={float(last_eval.get('eval_success_rate', 0.0)):.4f} "
-                f"coll={float(last_eval.get('eval_collision_rate', 0.0)):.4f} "
-                f"conv={row['conv_eval_success_delta_w5']:.4f}"
+                f"low_actor={row['loss_low_actor']:.4f} "
+                f"low_entropy={row['low_entropy']:.4f} "
+                f"loss_slack={float(low.get('loss_slack', 0.0)):.4f}"
             )
             if should_video:
                 print(f"[iter {itr}/{total_iterations}] periodic_media_dir={run_dir / 'eval_media' / f'iter_{itr:04d}'}")

@@ -213,7 +213,7 @@ def _cruise_constraints(state: AgentState, ctx: Dict[str, Any]) -> Dict[str, Any
 
 
 def _intrinsic_reward_common(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]) -> float:
-    speed, heading, goal_dir, goal_dist = _state_vec_speed_heading_goal(s_i, ctx)
+    speed, heading, _, _ = _state_vec_speed_heading_goal(s_i, ctx)
     a_i = np.asarray(a_i, dtype=np.float32).reshape(2)
     accel_pen = float(ctx.get("w_accel", 0.05)) * float(np.dot(a_i, a_i))
 
@@ -224,12 +224,9 @@ def _intrinsic_reward_common(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, An
     ref_speed = float(ctx.get("cruise_ref_speed", ctx.get("start_speed", ctx.get("ref_speed", 0.8))))
     speed_pen = float(ctx.get("w_speed_dev", 0.04)) * abs(speed - ref_speed)
 
-    heading_ref = float(ctx.get("heading_ref", atan2(float(goal_dir[1]), float(goal_dir[0]))))
+    heading_ref = float(ctx.get("heading_ref", heading))
     heading_pen = float(ctx.get("w_heading_dev", 0.02)) * abs(_signed_angle_diff(heading, heading_ref))
-
-    forward_progress = float(ctx.get("w_progress", 0.02)) * max(0.0, speed * float(np.dot(heading_dir, goal_dir)))
-    goal_dist_pen = float(ctx.get("w_goal_dist_pen", 0.02)) * goal_dist
-    return float(forward_progress - accel_pen - turn_pen - speed_pen - heading_pen - goal_dist_pen)
+    return float(-(accel_pen + turn_pen + speed_pen + heading_pen))
 
 
 def _turn_left_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:

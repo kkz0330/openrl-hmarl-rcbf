@@ -25,15 +25,16 @@ class GradCheckResult:
 def _build_qp_param(policy: LowLevelQPPolicy, obs: torch.Tensor, skill_id: int) -> QPParam:
     qp = policy(obs.unsqueeze(0), torch.tensor([skill_id], dtype=torch.long))
     return QPParam(
-        u_ref=qp.u_ref.reshape(-1),
-        r_diag=qp.r_diag.reshape(-1),
+        H_mat=qp.H_mat.reshape(2, 2),
+        f_lin=qp.f_lin.reshape(-1),
         w_clf=qp.w_clf.reshape(-1),
+        w_cbf=qp.w_cbf.reshape(-1),
+        cbf_slack_max=qp.cbf_slack_max.reshape(-1),
         cbf_k0=qp.cbf_k0.reshape(-1),
         cbf_k1=qp.cbf_k1.reshape(-1),
         clf_k=qp.clf_k.reshape(-1),
-        f_lin=None,
-        hocbf_gamma_h=None,
-        hocbf_gamma_hdot=None,
+        hocbf_gamma_h=qp.hocbf_gamma_h.reshape(-1),
+        hocbf_gamma_hdot=qp.hocbf_gamma_hdot.reshape(-1),
     )
 
 
@@ -73,7 +74,7 @@ def run_gradient_check(eps: float = 1e-3, tol: float = 5e-2) -> GradCheckResult:
     target = torch.tensor([0.25, -0.1], dtype=torch.float32)
 
     # Pick one scalar weight for finite-diff check.
-    param = policy.r_diag_head.weight
+    param = policy.phi_mu_head.weight
     idx = (0, 0)
     original = float(param.data[idx].item())
 

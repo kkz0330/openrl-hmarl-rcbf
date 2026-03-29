@@ -21,7 +21,7 @@ class DistributedCBFBaselineConfig:
     hocbf_gamma_h: float = 1.0
     hocbf_gamma_hdot: float = 1.0
     clf_k: float = 1.0
-    r_diag: Tuple[float, float] = (1.0, 1.0)
+    H_diag: Tuple[float, float] = (1.0, 1.0)
     w_clf: float = 10.0
     w_cbf: float = 100.0
     cbf_slack_max: float = 0.5
@@ -36,10 +36,10 @@ class DistributedCBFBaselineConfig:
 
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> "DistributedCBFBaselineConfig":
-        r_raw = data.get("r_diag", (1.0, 1.0))
-        r_arr = np.asarray(r_raw, dtype=np.float32).reshape(-1)
-        if r_arr.shape[0] != 2:
-            raise ValueError(f"baseline.r_diag must contain 2 values, got {r_arr.shape[0]}")
+        h_raw = data.get("H_diag", data.get("r_diag", (1.0, 1.0)))
+        h_arr = np.asarray(h_raw, dtype=np.float32).reshape(-1)
+        if h_arr.shape[0] != 2:
+            raise ValueError(f"baseline.H_diag must contain 2 values, got {h_arr.shape[0]}")
         return DistributedCBFBaselineConfig(
             cbf_mode=str(data.get("cbf_mode", "distributed_hocbf54")),
             cbf_share_agent=float(data.get("cbf_share_agent", 0.5)),
@@ -51,7 +51,7 @@ class DistributedCBFBaselineConfig:
             hocbf_gamma_h=float(data.get("hocbf_gamma_h", 1.0)),
             hocbf_gamma_hdot=float(data.get("hocbf_gamma_hdot", 1.0)),
             clf_k=float(data.get("clf_k", 1.0)),
-            r_diag=(float(r_arr[0]), float(r_arr[1])),
+            H_diag=(float(h_arr[0]), float(h_arr[1])),
             w_clf=float(data.get("w_clf", 10.0)),
             w_cbf=float(data.get("w_cbf", 100.0)),
             cbf_slack_max=float(data.get("cbf_slack_max", 0.5)),
@@ -71,8 +71,8 @@ class DistributedCBFBaselineController:
     Fixed-parameter distributed CBF-QP baseline controller.
 
     This controller mirrors the hand-crafted distributed CBF-QP baseline style:
-    - Goal-directed nominal control (u_ref from velocity tracking)
-    - Hard CBF constraints (agent-agent + agent-obstacle)
+    - Goal-directed nominal control encoded as QP linear term F
+    - Soft CBF constraints (agent-agent + agent-obstacle)
     - Soft CLF and optional input bounds
     """
 
@@ -93,7 +93,7 @@ class DistributedCBFBaselineController:
             return np.asarray([1.0, 0.0], dtype=np.float32)
         return (vec / n).astype(np.float32)
 
-    def _goal_tracking_u_ref(self, state: AgentState) -> np.ndarray:
+    def _goal_tracking_f_lin(self, state: AgentState) -> np.ndarray:
         goal_vec = np.asarray(state.goal - state.position, dtype=np.float32).reshape(2)
         goal_dist = float(np.linalg.norm(goal_vec))
         if goal_dist > 1e-8:
@@ -113,7 +113,9 @@ class DistributedCBFBaselineController:
 
         v_des = speed_des * goal_dir
         v = np.asarray(state.velocity, dtype=np.float32).reshape(2)
-        return (float(self.config.speed_kp) * (v_des - v)).astype(np.float32)
+        a_des = (float(self.config.speed_kp) * (v_des - v)).astype(np.float32)
+        H_mat = np.diag(np.asarray(self.config.H_diag, dtype=np.float32).reshape(2)).astype(np.float32)
+        return -(H_mat @ a_des).astype(np.float32)
 
     def _filter_neighbors(self, state_i: AgentState, neighbors_all: List[AgentState]) -> List[AgentState]:
         radius = float(self.config.neighbor_radius)
@@ -143,14 +145,16 @@ class DistributedCBFBaselineController:
         return local
 
     def _build_qp_param(self, state: AgentState) -> QPParam:
+        H_mat = np.diag(np.asarray(self.config.H_diag, dtype=np.float32).reshape(2)).astype(np.float32)
         return QPParam(
-            u_ref=self._goal_tracking_u_ref(state),
-            r_diag=np.asarray(self.config.r_diag, dtype=np.float32).reshape(2),
+            H_mat=H_mat,
+            f_lin=self._goal_tracking_f_lin(state),
             w_clf=np.asarray([float(self.config.w_clf)], dtype=np.float32),
+            w_cbf=np.asarray([float(self.config.w_cbf)], dtype=np.float32),
+            cbf_slack_max=np.asarray([float(self.config.cbf_slack_max)], dtype=np.float32),
             cbf_k0=np.asarray([float(self.config.cbf_k0)], dtype=np.float32),
             cbf_k1=np.asarray([float(self.config.cbf_k1)], dtype=np.float32),
             clf_k=np.asarray([float(self.config.clf_k)], dtype=np.float32),
-            f_lin=None,
             hocbf_gamma_h=np.asarray([float(self.config.hocbf_gamma_h)], dtype=np.float32),
             hocbf_gamma_hdot=np.asarray([float(self.config.hocbf_gamma_hdot)], dtype=np.float32),
         )

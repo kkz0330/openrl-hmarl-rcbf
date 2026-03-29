@@ -34,5 +34,12 @@ This folder is a runnable subset of the original `hmarl_cbf` project, copied int
 - The async training entrypoint forces:
   - `synchronization.mode = async`
   - `train.low_update_mode = onpolicy_ppo`
-- This keeps the copied subset closer to the HMARL-CBF paper than the original mixed engineering branch.
+- The low-level execution/training path now uses stochastic skill-conditioned `phi` parameterization:
+  - lower policy input: `obs_low + skill_id`
+  - lower policy distribution: `pi(phi | obs_low, skill_id)`
+  - sampled `phi` is decoded into full SPD `H` and linear term `F`
+  - PPO is applied on `log pi(phi | obs_low, skill_id)` rather than on an ad hoc action proxy
+  - evaluation uses deterministic mean `phi`
+  - QP no longer relies on learned `u_ref`
+  - soft-CBF and soft-CLF remain active in both execution and training
 - The baseline is intentionally retained for apples-to-apples comparison against the learned low-level CBF-QP controller.

@@ -211,6 +211,19 @@ def _build_trainer(
         n_skills=n_skills,
         action_dim=int(cfg["model"]["action_dim"]),
         hidden_dim=int(cfg["model"]["low_hidden_dim"]),
+        h_diag_min=float(cfg.get("low_level_qp", {}).get("h_diag_min", 1e-2)),
+        h_diag_max=float(cfg.get("low_level_qp", {}).get("h_diag_max", 50.0)),
+        f_abs_max=float(cfg.get("low_level_qp", {}).get("f_abs_max", 20.0)),
+        phi_log_std_min=float(cfg.get("low_level_qp", {}).get("phi_log_std_min", -5.0)),
+        phi_log_std_max=float(cfg.get("low_level_qp", {}).get("phi_log_std_max", 1.0)),
+        w_clf=float(cfg.get("low_level_qp", {}).get("w_clf", 10.0)),
+        w_cbf=float(cfg.get("low_level_qp", {}).get("w_cbf", 100.0)),
+        cbf_slack_max=float(cfg.get("low_level_qp", {}).get("cbf_slack_max", 1.0)),
+        cbf_k0=float(cfg.get("low_level_qp", {}).get("cbf_k0", 1.0)),
+        cbf_k1=float(cfg.get("low_level_qp", {}).get("cbf_k1", 1.0)),
+        clf_k=float(cfg.get("low_level_qp", {}).get("clf_k", 1.0)),
+        hocbf_gamma_h=float(cfg.get("low_level_qp", {}).get("hocbf_gamma_h", 1.0)),
+        hocbf_gamma_hdot=float(cfg.get("low_level_qp", {}).get("hocbf_gamma_hdot", 1.0)),
     )
 
     high_opt = torch.optim.Adam(high_policy.parameters(), lr=3e-4)
@@ -244,7 +257,6 @@ def _build_trainer(
         low_policy=low_policy,
         constraint_builder=constraint_builder,
         qp_solver=qp_solver,
-        skill_ref_weight=0.7,
         neighbor_perception_radius=float(cfg["env"]["neighbor_radius"]),
         obstacle_perception_range=float(cfg["env"]["lidar_range"]),
     )

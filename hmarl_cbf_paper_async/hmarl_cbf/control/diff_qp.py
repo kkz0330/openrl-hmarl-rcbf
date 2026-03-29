@@ -21,8 +21,7 @@ except ImportError:  # pragma: no cover - optional backend
 
 from hmarl_cbf.types import AgentState, QPParam
 
-R_DIAG_MIN = 1e-2
-R_DIAG_MAX = 50.0
+SPD_EPS = 1e-5
 
 
 @dataclass(slots=True)
@@ -49,6 +48,7 @@ class DiffConstraintConstants:
 class DiffQPSolveResult:
     action: Tensor
     slack: Tensor
+    cbf_slack: Tensor
     b_cbf: Tensor
     b_clf: Tensor
 
@@ -58,9 +58,9 @@ class TorchDifferentiableQPSolver:
     Differentiable QP solver based on cvxpylayers.
 
     Supports gradients through:
-    - f_lin (or u_ref fallback)
-    - r_diag
-    - w_clf
+    - full SPD H via parameterized Cholesky factor
+    - f_lin
+    - w_clf / w_cbf / cbf_slack_max
     - cbf_k0 / cbf_k1 (via b_cbf)
     - clf_k (via b_clf)
     """
@@ -87,41 +87,56 @@ class TorchDifferentiableQPSolver:
 
         u = cp.Variable(n_u)
         delta = cp.Variable(1, nonneg=True)
+        eps_cbf = cp.Variable(m_cbf, nonneg=True) if m_cbf > 0 else None
 
-        r_diag = cp.Parameter(n_u, nonneg=True)
+        H_sqrt = cp.Parameter((n_u, n_u))
         f_lin = cp.Parameter(n_u)
         w_clf = cp.Parameter(1, nonneg=True)
+        w_cbf = cp.Parameter(1, nonneg=True)
         A_cbf = cp.Parameter((m_cbf, n_u))
         b_cbf = cp.Parameter(m_cbf)
         A_clf = cp.Parameter((m_clf, n_u))
         b_clf = cp.Parameter(m_clf)
         u_min = cp.Parameter(n_u)
         u_max = cp.Parameter(n_u)
+        cbf_slack_max = cp.Parameter(1, nonneg=True)
 
-        # DPP-compliant diagonal-quadratic form:
-        # 0.5 * u^T diag(r_diag) u + f_lin^T u + w_clf * delta
         objective = (
-            0.5 * cp.sum(cp.multiply(r_diag, cp.square(u)))
+            0.5 * cp.sum_squares(H_sqrt @ u)
             + f_lin @ u
             + cp.sum(cp.multiply(w_clf, delta))
         )
-        constraints = [
-            A_cbf @ u <= b_cbf,
-            A_clf @ u <= b_clf + delta,
-            u >= u_min,
-            u <= u_max,
-            delta >= 0.0,
-        ]
+        if m_cbf > 0 and eps_cbf is not None:
+            objective += cp.sum(cp.multiply(w_cbf, eps_cbf))
+
+        constraints = [u >= u_min, u <= u_max, delta >= 0.0]
+        if m_cbf > 0 and eps_cbf is not None:
+            constraints.extend(
+                [
+                    A_cbf @ u <= b_cbf + eps_cbf,
+                    eps_cbf <= cp.multiply(np.ones((m_cbf,), dtype=np.float32), cbf_slack_max),
+                ]
+            )
+        if m_clf > 0:
+            constraints.append(A_clf @ u <= b_clf + delta)
+
         problem = cp.Problem(cp.Minimize(objective), constraints)
         if not problem.is_dpp():
             raise RuntimeError("Differentiable QP must be DPP-compliant")
         layer = CvxpyLayer(
             problem,
-            parameters=[r_diag, f_lin, w_clf, A_cbf, b_cbf, A_clf, b_clf, u_min, u_max],
-            variables=[u, delta],
+            parameters=[H_sqrt, f_lin, w_clf, w_cbf, A_cbf, b_cbf, A_clf, b_clf, u_min, u_max, cbf_slack_max],
+            variables=[u, delta, eps_cbf] if m_cbf > 0 and eps_cbf is not None else [u, delta],
         )
         self._cache[key] = layer
         return layer
+
+    @staticmethod
+    def _project_spd_torch(H: Tensor) -> Tensor:
+        H = 0.5 * (H + H.transpose(-1, -2))
+        eigvals, eigvecs = torch.linalg.eigh(H)
+        eigvals = torch.clamp(eigvals, min=SPD_EPS)
+        return eigvecs @ torch.diag_embed(eigvals) @ eigvecs.transpose(-1, -2)
 
     def solve(self, qp_param: QPParam, constants: DiffConstraintConstants) -> DiffQPSolveResult:
         if torch is None:
@@ -133,7 +148,6 @@ class TorchDifferentiableQPSolver:
         m_cbf = int(constants.A_cbf.shape[0])
         m_clf = int(constants.A_clf.shape[0])
 
-        # Keep these operations in torch graph for KKT backward.
         cbf_k0 = torch.reshape(torch.as_tensor(qp_param.cbf_k0, device=device, dtype=dtype), ())
         cbf_k1 = torch.reshape(torch.as_tensor(qp_param.cbf_k1, device=device, dtype=dtype), ())
         hocbf_gamma_h = (
@@ -162,26 +176,27 @@ class TorchDifferentiableQPSolver:
         b_clf = -clf_k * constants.clf_V
 
         layer = self._get_layer(m_cbf=m_cbf, m_clf=m_clf, n_u=n_u)
-        r_diag = torch.as_tensor(qp_param.r_diag, device=device, dtype=dtype).reshape(n_u)
-        r_diag = torch.clamp(r_diag, min=R_DIAG_MIN, max=R_DIAG_MAX)
-        if qp_param.f_lin is not None:
-            f_lin = torch.as_tensor(qp_param.f_lin, device=device, dtype=dtype).reshape(n_u)
-        else:
-            u_ref = torch.as_tensor(qp_param.u_ref, device=device, dtype=dtype).reshape(n_u)
-            f_lin = -(r_diag * u_ref)
+        H_mat = torch.as_tensor(qp_param.H_mat, device=device, dtype=dtype).reshape(n_u, n_u)
+        H_mat = self._project_spd_torch(H_mat)
+        H_sqrt = torch.linalg.cholesky(H_mat).transpose(-1, -2)
+        f_lin = torch.as_tensor(qp_param.f_lin, device=device, dtype=dtype).reshape(n_u)
         w_clf = torch.as_tensor(qp_param.w_clf, device=device, dtype=dtype).reshape(1)
+        w_cbf = torch.as_tensor(qp_param.w_cbf, device=device, dtype=dtype).reshape(1)
+        cbf_slack_max = torch.as_tensor(qp_param.cbf_slack_max, device=device, dtype=dtype).reshape(1)
 
         try:
-            action, slack = layer(
-                r_diag,
+            outputs = layer(
+                H_sqrt,
                 f_lin,
                 w_clf,
+                w_cbf,
                 constants.A_cbf,
                 b_cbf.reshape(m_cbf),
                 constants.A_clf,
                 b_clf.reshape(m_clf),
                 constants.u_min.reshape(n_u),
                 constants.u_max.reshape(n_u),
+                cbf_slack_max,
                 solver_args={
                     "solve_method": "ECOS",
                     "max_iters": self.ecos_max_iters,
@@ -189,16 +204,18 @@ class TorchDifferentiableQPSolver:
             )
         except Exception:
             try:
-                action, slack = layer(
-                    r_diag,
+                outputs = layer(
+                    H_sqrt,
                     f_lin,
                     w_clf,
+                    w_cbf,
                     constants.A_cbf,
                     b_cbf.reshape(m_cbf),
                     constants.A_clf,
                     b_clf.reshape(m_clf),
                     constants.u_min.reshape(n_u),
                     constants.u_max.reshape(n_u),
+                    cbf_slack_max,
                     solver_args={
                         "solve_method": "SCS",
                         "max_iters": self.scs_max_iters,
@@ -206,12 +223,24 @@ class TorchDifferentiableQPSolver:
                     },
                 )
             except Exception:
-                action = -f_lin / torch.clamp(r_diag, min=R_DIAG_MIN, max=R_DIAG_MAX)
+                action = -torch.linalg.pinv(H_mat) @ f_lin
                 action = torch.maximum(torch.minimum(action, constants.u_max.reshape(n_u)), constants.u_min.reshape(n_u))
                 slack = torch.zeros((1,), dtype=dtype, device=device)
+                cbf_slack = torch.zeros((m_cbf,), dtype=dtype, device=device)
+                return DiffQPSolveResult(
+                    action=action.reshape(n_u),
+                    slack=slack.reshape(1),
+                    cbf_slack=cbf_slack.reshape(m_cbf),
+                    b_cbf=b_cbf.reshape(m_cbf),
+                    b_clf=b_clf.reshape(m_clf),
+                )
+        action = outputs[0]
+        slack = outputs[1]
+        cbf_slack = outputs[2] if len(outputs) > 2 else torch.zeros((m_cbf,), dtype=dtype, device=device)
         return DiffQPSolveResult(
             action=action.reshape(n_u),
             slack=slack.reshape(1),
+            cbf_slack=cbf_slack.reshape(m_cbf),
             b_cbf=b_cbf.reshape(m_cbf),
             b_clf=b_clf.reshape(m_clf),
         )
@@ -233,11 +262,6 @@ def build_diff_constraint_constants(
     u_max: np.ndarray | List[float] = (1.0, 1.0),
     device: str | None = None,
 ) -> DiffConstraintConstants:
-    """
-    Builds state-dependent constants for a single-agent QP.
-
-    This keeps CBF/CLF gain terms differentiable w.r.t network outputs.
-    """
     if torch is None:
         raise RuntimeError("PyTorch is required for differentiable constraints")
 
@@ -362,7 +386,6 @@ def build_diff_constraint_constants(
             cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
 
     if len(A_rows) == 0:
-        # Ensure at least one CBF row so the layer signature is stable.
         A_cbf = torch.zeros((1, 2), dtype=dtype, device=dev)
         cbf_const = torch.zeros((1,), dtype=dtype, device=dev)
         cbf_h = torch.ones((1,), dtype=dtype, device=dev)

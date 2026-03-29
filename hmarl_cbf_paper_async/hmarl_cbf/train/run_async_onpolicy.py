@@ -26,7 +26,7 @@ from hmarl_cbf.train.run_sync_onpolicy import (
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train the paper-aligned async HMARL-CBF subset with low-level on-policy PPO."
+        description="Train the paper-aligned async HMARL-CBF subset with stochastic phi low-level PPO."
     )
     parser.add_argument("--config", type=str, default="configs/hmarl_cbf/default_async_onpolicy_gcbfplus.yaml")
     parser.add_argument("--output-root", type=str, default="artifacts/hmarl_cbf_paper_async")
@@ -138,10 +138,9 @@ def main() -> None:
                 f"ret={row['episode_return_mean']:.4f} "
                 f"safe={row['safe_reach_ratio']:.4f} "
                 f"skillH={row['skill_entropy_norm']:.4f} "
-                f"top1={row['top1_skill_ratio']:.4f} "
-                f"succ={float(last_eval.get('eval_success_rate', 0.0)):.4f} "
-                f"coll={float(last_eval.get('eval_collision_rate', 0.0)):.4f} "
-                f"conv={row['conv_eval_success_delta_w5']:.4f}"
+                f"low_actor={row['loss_low_actor']:.4f} "
+                f"low_entropy={row['low_entropy']:.4f} "
+                f"loss_slack={float(low.get('loss_slack', 0.0)):.4f}"
             )
         history.append(row)
 

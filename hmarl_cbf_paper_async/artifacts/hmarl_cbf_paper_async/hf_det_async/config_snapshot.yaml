@@ -1,5 +1,4 @@
 seed: 42
-
 env:
   n_agents: 4
   n_obstacles: 3
@@ -26,17 +25,19 @@ env:
   reward_collision_penalty: 1.0
   reward_oob_penalty: 1.0
   initial_speed_toward_goal: 0.0
-
 synchronization:
   mode: async
   t_sync_max: 10
-
 safety:
   d_min_agent: 0.3
   d_safe_obs: 0.3
-
 skills:
-  names: ["turn_left", "turn_right", "accelerate", "decelerate", "cruise"]
+  names:
+  - turn_left
+  - turn_right
+  - accelerate
+  - decelerate
+  - cruise
   default_max_duration: 10
   params:
     goal_threshold: 0.3
@@ -74,18 +75,14 @@ skills:
     w_heading_dev: 0.02
     w_progress: 0.02
     w_goal_dist_pen: 0.02
-
 model:
   high_hidden_dim: 128
   low_hidden_dim: 128
   action_dim: 2
-
 low_level_qp:
   h_diag_min: 0.01
   h_diag_max: 50.0
   f_abs_max: 20.0
-  phi_log_std_min: -5.0
-  phi_log_std_max: 1.0
   w_clf: 10.0
   w_cbf: 100.0
   cbf_slack_max: 1.0
@@ -94,7 +91,6 @@ low_level_qp:
   clf_k: 1.0
   hocbf_gamma_h: 1.0
   hocbf_gamma_hdot: 1.0
-
 high_level_mappo:
   clip_ratio: 0.2
   entropy_coef: 0.01
@@ -103,11 +99,9 @@ high_level_mappo:
   ppo_epochs: 4
   minibatch_size: 64
   normalize_advantages: true
-
 qp:
   backend: cvxpylayers
   use_stub_if_unavailable: true
-
 train:
   rollout_steps: 200
   total_iterations: 1000
@@ -123,7 +117,7 @@ train:
   lam_high: 0.95
   gamma_low: 0.99
   low_ext_reward_coef: 0.0
-  low_update_mode: onpolicy_ppo
+  low_update_mode: deterministic_diff
   low_update_epochs: 1
   low_max_samples_per_iter: 256
   low_target_step_scale: 0.05
@@ -134,9 +128,9 @@ train:
   low_ppo_max_grad_norm: 0.5
   low_policy_action_std: 0.2
   low_normalize_advantages: true
+  low_deterministic_value_coef: 0.5
   low_deterministic_slack_coef: 0.02
   low_deterministic_cbf_slack_coef: 0.05
-
 buffer_postprocess:
   gamma_high: 0.99
   lam_high: 0.95

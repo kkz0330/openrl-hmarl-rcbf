@@ -36,7 +36,7 @@ class TrainerHooks:
     low_update_epochs: int = 1
     low_max_samples_per_iter: int = 256
     low_target_step_scale: float = 0.05
-    low_update_mode: str = "onpolicy_ppo"
+    low_update_mode: str = "deterministic_diff"
     low_ppo_epochs: int = 2
     low_ppo_clip_ratio: float = 0.2
     low_ppo_value_coef: float = 0.5
@@ -45,6 +45,9 @@ class TrainerHooks:
     low_policy_action_std: float = 0.20
     low_normalize_advantages: bool = True
     low_detach_value_head_in_actor: bool = True
+    low_deterministic_value_coef: float = 0.5
+    low_deterministic_slack_coef: float = 0.02
+    low_deterministic_cbf_slack_coef: float = 0.05
     eval_episodes: int = 3
     eval_deterministic: bool = True
     eval_render: bool = False
@@ -234,12 +237,19 @@ class TrainerSyncOnPolicy:
         )
 
     def _is_low_update_ppo(self) -> bool:
-        return str(self.hooks.low_update_mode).strip().lower() in {"onpolicy_ppo", "low_ppo"}
+        return str(self.hooks.low_update_mode).strip().lower() in {"onpolicy_ppo", "low_ppo", "stochastic_phi_ppo"}
+
+    def _is_low_update_deterministic(self) -> bool:
+        return str(self.hooks.low_update_mode).strip().lower() in {
+            "deterministic_diff",
+            "deterministic_hf",
+            "target_regression",
+        }
 
     def _extract_local_context_from_info(
         self,
         tr: LowStepTransition,
-    ) -> tuple[AgentState, List[AgentState], List[Dict[str, Any]], Dict[str, Any], np.ndarray]:
+    ) -> tuple[AgentState, List[AgentState], List[Dict[str, Any]], Dict[str, Any]]:
         info = dict(tr.info or {})
         pos = np.asarray(tr.obs_low.self_state[:2], dtype=np.float32)
         vel = np.asarray(tr.obs_low.self_state[2:4], dtype=np.float32)
@@ -281,8 +291,7 @@ class TrainerSyncOnPolicy:
             )
 
         safety_constraints = dict(info.get("safety_constraints", {}))
-        skill_u_ref = np.asarray(info.get("skill_u_ref", np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
-        return state, neighbors, obstacles, safety_constraints, skill_u_ref
+        return state, neighbors, obstacles, safety_constraints
 
     def _build_diff_constants(
         self,
@@ -320,13 +329,14 @@ class TrainerSyncOnPolicy:
     @staticmethod
     def _flatten_qp_param_torch(qp_param_raw: QPParam) -> QPParam:
         return QPParam(
-            u_ref=qp_param_raw.u_ref.reshape(-1),
-            r_diag=qp_param_raw.r_diag.reshape(-1),
+            H_mat=qp_param_raw.H_mat.reshape(2, 2),
+            f_lin=qp_param_raw.f_lin.reshape(-1),
             w_clf=qp_param_raw.w_clf.reshape(-1),
+            w_cbf=qp_param_raw.w_cbf.reshape(-1),
+            cbf_slack_max=qp_param_raw.cbf_slack_max.reshape(-1),
             cbf_k0=qp_param_raw.cbf_k0.reshape(-1),
             cbf_k1=qp_param_raw.cbf_k1.reshape(-1),
             clf_k=qp_param_raw.clf_k.reshape(-1),
-            f_lin=None,
             hocbf_gamma_h=(
                 qp_param_raw.hocbf_gamma_h.reshape(-1)
                 if getattr(qp_param_raw, "hocbf_gamma_h", None) is not None
@@ -342,13 +352,14 @@ class TrainerSyncOnPolicy:
     @staticmethod
     def _flatten_qp_param_numpy(qp_param_raw: QPParam) -> QPParam:
         return QPParam(
-            u_ref=np.asarray(qp_param_raw.u_ref.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
-            r_diag=np.asarray(qp_param_raw.r_diag.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
+            H_mat=np.asarray(qp_param_raw.H_mat.detach().cpu().numpy(), dtype=np.float32).reshape(2, 2),
+            f_lin=np.asarray(qp_param_raw.f_lin.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
             w_clf=np.asarray(qp_param_raw.w_clf.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
+            w_cbf=np.asarray(qp_param_raw.w_cbf.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
+            cbf_slack_max=np.asarray(qp_param_raw.cbf_slack_max.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
             cbf_k0=np.asarray(qp_param_raw.cbf_k0.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
             cbf_k1=np.asarray(qp_param_raw.cbf_k1.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
             clf_k=np.asarray(qp_param_raw.clf_k.detach().cpu().numpy(), dtype=np.float32).reshape(-1),
-            f_lin=None,
             hocbf_gamma_h=(
                 np.asarray(qp_param_raw.hocbf_gamma_h.detach().cpu().numpy(), dtype=np.float32).reshape(-1)
                 if getattr(qp_param_raw, "hocbf_gamma_h", None) is not None
@@ -370,18 +381,15 @@ class TrainerSyncOnPolicy:
     ) -> tuple[Dict[int, Any], Dict[int, Any], Dict[int, Dict[str, Any]]]:
         if torch is None:
             raise RuntimeError("PyTorch is required for on-policy low-level updates")
-        if self.diff_qp_solver is None:
-            raise RuntimeError("differentiable QP solver is not set")
         if self.skill_runtime is None:
             raise RuntimeError("skill runtime manager is not set")
         if self.low_level_controller is None:
             raise RuntimeError("low level controller is not set")
-        if self.low_policy is None or not hasattr(self.low_policy, "forward"):
-            raise RuntimeError("low_policy must be a torch module for on-policy low-level updates")
+        if self.low_policy is None or not hasattr(self.low_policy, "sample_qp_params"):
+            raise RuntimeError("low_policy must provide sample_qp_params(...) for stochastic phi PPO")
 
         skill_targets = self.skill_runtime.control_targets(states=states, obs_low=obs_low, runtime_ctx=runtime_ctx)
         agent_ids = sorted(states.keys())
-        std = max(1e-3, float(self.hooks.low_policy_action_std))
 
         actions: Dict[int, Any] = {}
         outputs: Dict[int, Any] = {}
@@ -391,7 +399,6 @@ class TrainerSyncOnPolicy:
             state_i = states[aid]
             target = dict(skill_targets[aid])
             skill_id = int(target["skill_id"])
-            skill_u_ref = np.asarray(target["u_ref_skill"], dtype=np.float32).reshape(2)
             safety_constraints = dict(target.get("safety_constraints", {}))
             neighbors_all = [state_j for other_id, state_j in states.items() if other_id != aid]
             neighbors = self.low_level_controller._filter_neighbors(state_i=state_i, neighbors=neighbors_all)
@@ -400,47 +407,12 @@ class TrainerSyncOnPolicy:
                 obstacles=obstacles,
                 obs_low=obs_low[aid],
             )
-            constants, _, _ = self._build_diff_constants(
-                state_i=state_i,
-                neighbors=neighbors,
-                obstacles=obstacles_local,
-                safety_constraints=safety_constraints,
-            )
 
             obs_tensor = torch.as_tensor(obs_low[aid].flat, dtype=torch.float32).unsqueeze(0)
             skill_tensor = torch.as_tensor([skill_id], dtype=torch.long)
             with torch.no_grad():
-                qp_param_raw = self.low_policy(obs_tensor, skill_tensor)
-                qp_param = self._flatten_qp_param_torch(qp_param_raw)
-                policy_u_ref = qp_param.u_ref.reshape(2)
-                fused_mean_u_ref = self.low_level_controller._fuse_u_ref(
-                    policy_u_ref=np.asarray(policy_u_ref.detach().cpu().numpy(), dtype=np.float32).reshape(2),
-                    skill_u_ref=skill_u_ref,
-                )
-                qp_param_mean = QPParam(
-                    u_ref=torch.as_tensor(fused_mean_u_ref, dtype=torch.float32),
-                    r_diag=qp_param.r_diag,
-                    w_clf=qp_param.w_clf,
-                    cbf_k0=qp_param.cbf_k0,
-                    cbf_k1=qp_param.cbf_k1,
-                    clf_k=qp_param.clf_k,
-                    f_lin=None,
-                    hocbf_gamma_h=qp_param.hocbf_gamma_h,
-                    hocbf_gamma_hdot=qp_param.hocbf_gamma_hdot,
-                )
-                mean_out = self.diff_qp_solver.solve(qp_param_mean, constants)
-                mean_action = mean_out.action.reshape(2)
-                noise = torch.randn_like(mean_action) * std
-                sampled_proxy = mean_action + noise
-                dist = torch.distributions.Normal(mean_action, torch.full_like(mean_action, std))
-                logp = torch.sum(dist.log_prob(sampled_proxy))
-                value = (
-                    self.low_policy.low_value(obs_tensor, skill_tensor).reshape(1)
-                    if hasattr(self.low_policy, "low_value")
-                    else torch.zeros((1,), dtype=torch.float32)
-                )
-                qp_param_np = self._flatten_qp_param_numpy(qp_param_raw)
-                sampled_proxy_np = np.asarray(sampled_proxy.detach().cpu().numpy(), dtype=np.float32).reshape(2)
+                sample_out = self.low_policy.sample_qp_params(obs_tensor, skill_tensor, deterministic=False)
+                qp_param_np = self._flatten_qp_param_numpy(sample_out["qp_param"])
                 out = self.low_level_controller.solve_for_agent(
                     agent_id=aid,
                     state_i=state_i,
@@ -448,20 +420,23 @@ class TrainerSyncOnPolicy:
                     obstacles=obstacles_local,
                     obs_low=obs_low[aid],
                     skill_id=skill_id,
-                    skill_u_ref=skill_u_ref,
                     safety_constraints=safety_constraints,
                     qp_param_override=qp_param_np,
-                    fused_u_ref_override=sampled_proxy_np,
                 )
                 actions[aid] = np.asarray(out.solution.action, dtype=np.float32).reshape(2)
                 outputs[aid] = out
+                value = (
+                    self.low_policy.low_value(obs_tensor, skill_tensor).reshape(1)
+                    if hasattr(self.low_policy, "low_value")
+                    else torch.zeros((1,), dtype=torch.float32)
+                )
                 per_step_stats[aid] = {
-                    "low_logp": float(logp.detach().cpu().item()),
+                    "low_logp": float(sample_out["logp"][0].detach().cpu().item()),
                     "low_value": float(value[0].detach().cpu().item()),
-                    "low_policy_action_sample": sampled_proxy_np.copy(),
-                    "low_policy_action_mean": np.asarray(mean_action.detach().cpu().numpy(), dtype=np.float32).reshape(2).copy(),
-                    "skill_u_ref": skill_u_ref.copy(),
-                    "low_policy_action_std": float(std),
+                    "low_entropy": float(sample_out["entropy"][0].detach().cpu().item()),
+                    "low_phi_sample": np.asarray(sample_out["phi"][0].detach().cpu().numpy(), dtype=np.float32).copy(),
+                    "low_phi_mean": np.asarray(sample_out["mu"][0].detach().cpu().numpy(), dtype=np.float32).copy(),
+                    "low_phi_log_std": np.asarray(sample_out["log_std"][0].detach().cpu().numpy(), dtype=np.float32).copy(),
                 }
         return actions, outputs, per_step_stats
 
@@ -511,26 +486,7 @@ class TrainerSyncOnPolicy:
         )
         obs_tensor = torch.as_tensor(obs_low.flat, dtype=torch.float32).unsqueeze(0)
         skill_tensor = torch.as_tensor([skill_id], dtype=torch.long)
-        qp_param_raw = self.low_policy(obs_tensor, skill_tensor)
-        qp_param = QPParam(
-            u_ref=qp_param_raw.u_ref.reshape(-1),
-            r_diag=qp_param_raw.r_diag.reshape(-1),
-            w_clf=qp_param_raw.w_clf.reshape(-1),
-            cbf_k0=qp_param_raw.cbf_k0.reshape(-1),
-            cbf_k1=qp_param_raw.cbf_k1.reshape(-1),
-            clf_k=qp_param_raw.clf_k.reshape(-1),
-            f_lin=None,
-            hocbf_gamma_h=(
-                qp_param_raw.hocbf_gamma_h.reshape(-1)
-                if getattr(qp_param_raw, "hocbf_gamma_h", None) is not None
-                else None
-            ),
-            hocbf_gamma_hdot=(
-                qp_param_raw.hocbf_gamma_hdot.reshape(-1)
-                if getattr(qp_param_raw, "hocbf_gamma_hdot", None) is not None
-                else None
-            ),
-        )
+        qp_param = self._flatten_qp_param_torch(self.low_policy(obs_tensor, skill_tensor))
         out = self.diff_qp_solver.solve(qp_param, constants)
         target = torch.as_tensor(np.asarray(target_action, dtype=np.float32).reshape(2), dtype=torch.float32)
         loss = 0.5 * torch.sum((out.action - target) ** 2)
@@ -545,6 +501,22 @@ class TrainerSyncOnPolicy:
             "action_y": float(out.action[1].detach().cpu().item()),
             "slack": float(out.slack[0].detach().cpu().item()),
         }
+
+    def _compute_low_values(
+        self,
+        obs_low: Dict[int, AgentObsLow],
+        skill_ids: Dict[int, int],
+    ) -> Dict[int, Dict[str, float]]:
+        stats: Dict[int, Dict[str, float]] = {}
+        if torch is None or self.low_policy is None or not hasattr(self.low_policy, "low_value"):
+            return stats
+        with torch.no_grad():
+            for aid, skill_id in skill_ids.items():
+                obs_tensor = torch.as_tensor(obs_low[aid].flat, dtype=torch.float32).unsqueeze(0)
+                skill_tensor = torch.as_tensor([int(skill_id)], dtype=torch.long)
+                value = self.low_policy.low_value(obs_tensor, skill_tensor).reshape(1)
+                stats[aid] = {"low_value": float(value[0].detach().cpu().item())}
+        return stats
 
     def finalize_rollout_buffers(
         self,
@@ -648,19 +620,24 @@ class TrainerSyncOnPolicy:
         for _ in range(self.hooks.rollout_steps):
             states = {s.agent_id: s for s in self.env.get_agent_states()}
             obs_low = {aid: obs[aid]["low"] for aid in agent_ids}
-            low_step_stats: Dict[int, Dict[str, Any]] = {}
             if self._is_low_update_ppo():
                 actions, control_outputs, low_step_stats = self._compute_safe_actions_for_low_ppo(
                     states=states,
                     obs_low=obs_low,
                     obstacles=self.env.get_obstacles(),
                 )
-            else:
+            elif self._is_low_update_deterministic():
                 actions, control_outputs = self.compute_safe_actions(
                     states=states,
                     obs_low=obs_low,
                     obstacles=self.env.get_obstacles(),
                 )
+                low_step_stats = self._compute_low_values(
+                    obs_low=obs_low,
+                    skill_ids={aid: int(control_outputs[aid].skill_id) for aid in agent_ids},
+                )
+            else:
+                raise ValueError("unsupported paper subset low-level update mode")
             next_obs, rewards, terminated, truncated, info = self.env.step(actions)
             next_states = {s.agent_id: s for s in self.env.get_agent_states()}
             next_obs_low = {aid: next_obs[aid]["low"] for aid in agent_ids}
@@ -719,19 +696,28 @@ class TrainerSyncOnPolicy:
                                 for o in control_outputs[aid].obstacles_used
                             ],
                             "skill_u_ref": np.asarray(skill_out[aid].u_ref_skill, dtype=np.float32).reshape(2).copy(),
-                            "low_policy_action_sample": (
-                                np.asarray(low_step_stats[aid]["low_policy_action_sample"], dtype=np.float32).reshape(2).copy()
-                                if aid in low_step_stats
-                                else np.asarray(actions[aid], dtype=np.float32).reshape(2).copy()
+                            "low_qp_H": np.asarray(control_outputs[aid].qp_param.H_mat, dtype=np.float32).reshape(2, 2).copy(),
+                            "low_qp_F": np.asarray(control_outputs[aid].qp_param.f_lin, dtype=np.float32).reshape(2).copy(),
+                            "low_phi_sample": (
+                                np.asarray(low_step_stats[aid]["low_phi_sample"], dtype=np.float32).copy()
+                                if aid in low_step_stats and "low_phi_sample" in low_step_stats[aid]
+                                else None
                             ),
-                            "low_policy_action_mean": (
-                                np.asarray(low_step_stats[aid]["low_policy_action_mean"], dtype=np.float32).reshape(2).copy()
-                                if aid in low_step_stats
-                                else np.asarray(actions[aid], dtype=np.float32).reshape(2).copy()
+                            "low_phi_mean": (
+                                np.asarray(low_step_stats[aid]["low_phi_mean"], dtype=np.float32).copy()
+                                if aid in low_step_stats and "low_phi_mean" in low_step_stats[aid]
+                                else None
                             ),
-                            "low_policy_action_std": float(
-                                low_step_stats.get(aid, {}).get("low_policy_action_std", self.hooks.low_policy_action_std)
+                            "low_phi_log_std": (
+                                np.asarray(low_step_stats[aid]["low_phi_log_std"], dtype=np.float32).copy()
+                                if aid in low_step_stats and "low_phi_log_std" in low_step_stats[aid]
+                                else None
                             ),
+                            "low_entropy": float(low_step_stats.get(aid, {}).get("low_entropy", 0.0)),
+                            "low_cbf_slack": np.asarray(
+                                control_outputs[aid].solution.cbf_slack if control_outputs[aid].solution.cbf_slack is not None else [],
+                                dtype=np.float32,
+                            ).reshape(-1).copy(),
                         },
                     )
                 )
@@ -829,13 +815,15 @@ class TrainerSyncOnPolicy:
         }
 
     def update_low_level(self) -> Dict[str, float]:
-        if not self._is_low_update_ppo():
+        if self._is_low_update_ppo():
+            return self._update_low_level_onpolicy_ppo()
+        if not self._is_low_update_deterministic():
             raise ValueError(
-                "The paper-aligned subset only supports low_update_mode='onpolicy_ppo' or 'low_ppo'."
+                "The paper-aligned subset only supports stochastic phi PPO or deterministic H/F updates."
             )
-        return self._update_low_level_onpolicy_ppo()
+        return self._update_low_level_deterministic_diff()
 
-    def _update_low_level_target_regression(self) -> Dict[str, float]:
+    def _update_low_level_deterministic_diff(self) -> Dict[str, float]:
         if self.diff_qp_solver is None or self.low_level_optimizer is None:
             return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
         if self.low_policy is None or not hasattr(self.low_policy, "forward"):
@@ -846,11 +834,17 @@ class TrainerSyncOnPolicy:
             return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
 
         selected = list(low_steps)[-self.hooks.low_max_samples_per_iter :]
-        losses: List[float] = []
+        total_losses: List[float] = []
+        actor_losses: List[float] = []
+        value_losses: List[float] = []
+        slack_losses: List[float] = []
         n_updates = 0
+        value_coef = float(self.hooks.low_deterministic_value_coef)
+        slack_coef = float(self.hooks.low_deterministic_slack_coef)
+        cbf_slack_coef = float(self.hooks.low_deterministic_cbf_slack_coef)
         for _ in range(max(1, self.hooks.low_update_epochs)):
             for tr in selected:
-                state, neighbors, obstacles, safety_constraints, _ = self._extract_local_context_from_info(tr)
+                state, neighbors, obstacles, safety_constraints = self._extract_local_context_from_info(tr)
 
                 adv = float(
                     tr.advantage if tr.advantage is not None else tr.return_target if tr.return_target is not None else 0.0
@@ -869,26 +863,47 @@ class TrainerSyncOnPolicy:
                         safety_constraints.get("u_max", self.constraint_builder.u_max), dtype=np.float32
                     ).reshape(2)
                     target_action = np.clip(target_action, target_u_min, target_u_max)
-
-                out = self.backward_low_level_diff_step(
+                constants, _, _ = self._build_diff_constants(
                     state_i=state,
                     neighbors=neighbors,
                     obstacles=obstacles,
-                    obs_low=tr.obs_low,
-                    skill_id=int(tr.skill_id),
-                    target_action=target_action,
-                    optimizer=self.low_level_optimizer,
-                    d_min_agent=float(self.constraint_builder.d_min_agent),
-                    d_safe_obs=float(self.constraint_builder.d_safe_obs),
-                    constraint_overrides=safety_constraints,
+                    safety_constraints=safety_constraints,
                 )
-                losses.append(float(out["loss"]))
+                obs_tensor = torch.as_tensor(tr.obs_low.flat, dtype=torch.float32).unsqueeze(0)
+                skill_tensor = torch.as_tensor([int(tr.skill_id)], dtype=torch.long)
+                qp_param = self._flatten_qp_param_torch(self.low_policy(obs_tensor, skill_tensor))
+                out = self.diff_qp_solver.solve(qp_param, constants)
+                action_pred = out.action.reshape(2)
+                target_t = torch.as_tensor(target_action, dtype=torch.float32, device=action_pred.device)
+                actor_loss = 0.5 * torch.sum((action_pred - target_t) ** 2)
+                slack_loss = slack_coef * torch.sum(out.slack ** 2)
+                if out.cbf_slack.numel() > 0:
+                    slack_loss = slack_loss + cbf_slack_coef * torch.mean(out.cbf_slack ** 2)
+
+                value_loss = torch.zeros((), dtype=torch.float32, device=action_pred.device)
+                if hasattr(self.low_policy, "low_value") and tr.return_target is not None:
+                    value_pred = self.low_policy.low_value(obs_tensor, skill_tensor).reshape(1)[0].to(device=action_pred.device)
+                    ret_t = torch.as_tensor(float(tr.return_target), dtype=torch.float32, device=action_pred.device)
+                    value_loss = 0.5 * (value_pred - ret_t) ** 2
+
+                total_loss = actor_loss + value_coef * value_loss + slack_loss
+                self.low_level_optimizer.zero_grad(set_to_none=True)
+                total_loss.backward()
+                self.low_level_optimizer.step()
+
+                total_losses.append(float(total_loss.detach().cpu().item()))
+                actor_losses.append(float(actor_loss.detach().cpu().item()))
+                value_losses.append(float(value_loss.detach().cpu().item()))
+                slack_losses.append(float(slack_loss.detach().cpu().item()))
                 n_updates += 1
 
         return {
             "n_updates": float(n_updates),
-            "loss_mean": float(sum(losses) / max(1, len(losses))),
-            "loss_last": float(losses[-1] if losses else 0.0),
+            "loss_mean": float(sum(total_losses) / max(1, len(total_losses))),
+            "loss_last": float(total_losses[-1] if total_losses else 0.0),
+            "loss_actor": float(sum(actor_losses) / max(1, len(actor_losses))),
+            "loss_value": float(sum(value_losses) / max(1, len(value_losses))),
+            "loss_slack": float(sum(slack_losses) / max(1, len(slack_losses))),
         }
 
     def _update_low_level_onpolicy_ppo(self) -> Dict[str, float]:
@@ -896,17 +911,21 @@ class TrainerSyncOnPolicy:
             raise RuntimeError("PyTorch is required for on-policy low-level updates")
         if self.diff_qp_solver is None or self.low_level_optimizer is None:
             return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
-        if self.low_policy is None or not hasattr(self.low_policy, "forward") or not hasattr(self.low_policy, "low_value"):
-            raise RuntimeError("low_policy must provide forward(...) and low_value(...) for on-policy low-level updates")
-        if self.low_level_controller is None:
-            raise RuntimeError("low level controller is not set")
+        if self.low_policy is None or not hasattr(self.low_policy, "evaluate_phi") or not hasattr(self.low_policy, "low_value"):
+            raise RuntimeError("low_policy must provide evaluate_phi(...) and low_value(...) for stochastic phi PPO")
 
         low_steps = self.buffer.snapshot()[0]
         if len(low_steps) == 0:
             return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
 
         selected = list(low_steps)[-self.hooks.low_max_samples_per_iter :]
-        ppo_samples = [tr for tr in selected if tr.logp is not None and tr.return_target is not None]
+        ppo_samples = [
+            tr
+            for tr in selected
+            if tr.logp is not None
+            and tr.return_target is not None
+            and tr.info.get("low_phi_sample") is not None
+        ]
         if len(ppo_samples) == 0:
             return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
 
@@ -926,11 +945,14 @@ class TrainerSyncOnPolicy:
         value_coef = float(self.hooks.low_ppo_value_coef)
         entropy_coef = float(self.hooks.low_ppo_entropy_coef)
         max_grad_norm = float(self.hooks.low_ppo_max_grad_norm)
+        slack_coef = float(self.hooks.low_deterministic_slack_coef)
+        cbf_slack_coef = float(self.hooks.low_deterministic_cbf_slack_coef)
 
         loss_all: List[float] = []
         loss_actor_all: List[float] = []
         loss_value_all: List[float] = []
         entropy_all: List[float] = []
+        slack_all: List[float] = []
         n_updates = 0
 
         n_epochs = max(1, int(self.hooks.low_ppo_epochs))
@@ -939,7 +961,7 @@ class TrainerSyncOnPolicy:
             for idx in order:
                 tr = ppo_samples[int(idx)]
                 adv = float(adv_np[int(idx)])
-                state, neighbors, obstacles, safety_constraints, skill_u_ref = self._extract_local_context_from_info(tr)
+                state, neighbors, obstacles, safety_constraints = self._extract_local_context_from_info(tr)
                 constants, _, _ = self._build_diff_constants(
                     state_i=state,
                     neighbors=neighbors,
@@ -948,48 +970,32 @@ class TrainerSyncOnPolicy:
                 )
                 obs_tensor = torch.as_tensor(tr.obs_low.flat, dtype=torch.float32).unsqueeze(0)
                 skill_tensor = torch.as_tensor([int(tr.skill_id)], dtype=torch.long)
-                qp_param_raw = self.low_policy(obs_tensor, skill_tensor)
-                qp_param = self._flatten_qp_param_torch(qp_param_raw)
-                dtype = torch.float32
-                device = constants.A_cbf.device
-                skill_u_ref_t = torch.as_tensor(skill_u_ref, dtype=dtype, device=device).reshape(2)
-                policy_u_ref_t = qp_param.u_ref.reshape(2).to(device=device, dtype=dtype)
-                skill_ref_weight = float(self.low_level_controller.skill_ref_weight)
-                fused_mean_u_ref = skill_ref_weight * skill_u_ref_t + (1.0 - skill_ref_weight) * policy_u_ref_t
-                qp_param_mean = QPParam(
-                    u_ref=fused_mean_u_ref,
-                    r_diag=qp_param.r_diag,
-                    w_clf=qp_param.w_clf,
-                    cbf_k0=qp_param.cbf_k0,
-                    cbf_k1=qp_param.cbf_k1,
-                    clf_k=qp_param.clf_k,
-                    f_lin=None,
-                    hocbf_gamma_h=qp_param.hocbf_gamma_h,
-                    hocbf_gamma_hdot=qp_param.hocbf_gamma_hdot,
+                phi_sample = torch.as_tensor(
+                    np.asarray(tr.info["low_phi_sample"], dtype=np.float32).reshape(1, -1),
+                    dtype=torch.float32,
                 )
-                mean_out = self.diff_qp_solver.solve(qp_param_mean, constants)
-                mean_action = mean_out.action.reshape(2)
-                sample_action = torch.as_tensor(
-                    np.asarray(tr.info.get("low_policy_action_sample", tr.action), dtype=np.float32).reshape(2),
-                    dtype=dtype,
-                    device=device,
-                )
-                std = max(1e-3, float(tr.info.get("low_policy_action_std", self.hooks.low_policy_action_std)))
-                dist = torch.distributions.Normal(mean_action, torch.full_like(mean_action, std))
-                new_logp = torch.sum(dist.log_prob(sample_action))
-                old_logp = torch.as_tensor(float(tr.logp), dtype=dtype, device=device)
-                adv_t = torch.as_tensor(adv, dtype=dtype, device=device)
+                eval_out = self.low_policy.evaluate_phi(obs_tensor, skill_tensor, phi_sample)
+                new_logp = eval_out["logp"].reshape(1)[0]
+                entropy_bonus = eval_out["entropy"].reshape(1)[0]
+                qp_param = self._flatten_qp_param_torch(eval_out["qp_param"])
+                qp_out = self.diff_qp_solver.solve(qp_param, constants)
+
+                old_logp = torch.as_tensor(float(tr.logp), dtype=torch.float32, device=new_logp.device)
+                adv_t = torch.as_tensor(adv, dtype=torch.float32, device=new_logp.device)
                 ratio = torch.exp(new_logp - old_logp)
                 surr1 = ratio * adv_t
                 surr2 = torch.clamp(ratio, 1.0 - clip_ratio, 1.0 + clip_ratio) * adv_t
                 actor_loss = -torch.minimum(surr1, surr2)
 
-                value_pred = self.low_policy.low_value(obs_tensor, skill_tensor).reshape(1).to(device=device, dtype=dtype)[0]
-                ret_t = torch.as_tensor(float(tr.return_target), dtype=dtype, device=device)
+                value_pred = self.low_policy.low_value(obs_tensor, skill_tensor).reshape(1).to(device=new_logp.device)[0]
+                ret_t = torch.as_tensor(float(tr.return_target), dtype=torch.float32, device=new_logp.device)
                 value_loss = 0.5 * (value_pred - ret_t) ** 2
-                entropy_bonus = torch.sum(dist.entropy())
 
-                total_loss = actor_loss + value_coef * value_loss - entropy_coef * entropy_bonus
+                slack_loss = slack_coef * torch.sum(qp_out.slack ** 2)
+                if qp_out.cbf_slack.numel() > 0:
+                    slack_loss = slack_loss + cbf_slack_coef * torch.mean(qp_out.cbf_slack ** 2)
+
+                total_loss = actor_loss + value_coef * value_loss - entropy_coef * entropy_bonus + slack_loss
                 self.low_level_optimizer.zero_grad(set_to_none=True)
                 total_loss.backward()
                 if max_grad_norm > 0:
@@ -1000,6 +1006,7 @@ class TrainerSyncOnPolicy:
                 loss_actor_all.append(float(actor_loss.detach().cpu().item()))
                 loss_value_all.append(float(value_loss.detach().cpu().item()))
                 entropy_all.append(float(entropy_bonus.detach().cpu().item()))
+                slack_all.append(float(slack_loss.detach().cpu().item()))
                 n_updates += 1
 
         return {
@@ -1009,6 +1016,7 @@ class TrainerSyncOnPolicy:
             "loss_actor": float(sum(loss_actor_all) / max(1, len(loss_actor_all))),
             "loss_value": float(sum(loss_value_all) / max(1, len(loss_value_all))),
             "entropy": float(sum(entropy_all) / max(1, len(entropy_all))),
+            "loss_slack": float(sum(slack_all) / max(1, len(slack_all))),
         }
 
     def update_high_level(self) -> Dict[str, float]:

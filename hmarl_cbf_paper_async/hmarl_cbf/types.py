@@ -122,32 +122,32 @@ class SkillSpec:
 
 @dataclass(slots=True)
 class QPParam:
-    u_ref: TensorLike
-    r_diag: TensorLike
+    H_mat: TensorLike
+    f_lin: TensorLike
     w_clf: TensorLike
+    w_cbf: TensorLike
+    cbf_slack_max: TensorLike
     cbf_k0: TensorLike
     cbf_k1: TensorLike
     clf_k: TensorLike
-    f_lin: TensorLike | None = None
     hocbf_gamma_h: TensorLike | None = None
     hocbf_gamma_hdot: TensorLike | None = None
 
 
 @dataclass(slots=True)
 class QPProblem:
-    u_ref: TensorLike
-    r_diag: TensorLike
+    H_mat: TensorLike
+    f_lin: TensorLike
     w_clf: TensorLike
+    w_cbf: TensorLike
+    cbf_slack_max: TensorLike
     A_cbf: TensorLike
     b_cbf: TensorLike
     A_clf: TensorLike
     b_clf: TensorLike
     u_min: TensorLike
     u_max: TensorLike
-    f_lin: TensorLike | None = None
     delta_min: float = 0.0
-    w_cbf: float = 0.0
-    cbf_slack_max: float = 0.0
 
 
 @dataclass(slots=True)

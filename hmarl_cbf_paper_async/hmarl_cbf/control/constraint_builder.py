@@ -6,9 +6,6 @@ import numpy as np
 
 from hmarl_cbf.types import AgentState, QPParam, QPProblem
 
-R_DIAG_MIN = 1e-2
-R_DIAG_MAX = 50.0
-
 
 class ConstraintBuilder:
     """Builds distributed hard-CBF and soft-CLF constraints for one agent."""
@@ -31,7 +28,7 @@ class ConstraintBuilder:
         neighbors: List[AgentState],
         obstacles: List[Dict[str, np.ndarray | float]],
         qp_param: QPParam,
-        u_ref_override: np.ndarray | None = None,
+        H_override: np.ndarray | None = None,
         f_lin_override: np.ndarray | None = None,
         constraint_overrides: Dict[str, Any] | None = None,
     ) -> QPProblem:
@@ -193,30 +190,31 @@ class ConstraintBuilder:
         A_clf = v_err.reshape(1, 2).astype(np.float32)
         b_clf = np.asarray([-clf_k * V], dtype=np.float32)
 
-        u_ref_eff = np.asarray(qp_param.u_ref if u_ref_override is None else u_ref_override, dtype=np.float32).reshape(2)
-        r_diag = np.asarray(qp_param.r_diag, dtype=np.float32).reshape(2)
-        r_diag = np.clip(r_diag, R_DIAG_MIN, R_DIAG_MAX).astype(np.float32)
+        H_mat = np.asarray(qp_param.H_mat if H_override is None else H_override, dtype=np.float32).reshape(2, 2)
+        H_mat = 0.5 * (H_mat + H_mat.T)
+        H_mat += 1e-6 * np.eye(2, dtype=np.float32)
         if f_lin_override is not None:
             f_lin = np.asarray(f_lin_override, dtype=np.float32).reshape(2)
-        elif qp_param.f_lin is not None:
-            f_lin = np.asarray(qp_param.f_lin, dtype=np.float32).reshape(2)
         else:
-            f_lin = -(r_diag * u_ref_eff)
+            f_lin = np.asarray(qp_param.f_lin, dtype=np.float32).reshape(2)
 
         return QPProblem(
-            u_ref=u_ref_eff,
-            r_diag=r_diag,
+            H_mat=H_mat,
+            f_lin=f_lin,
             w_clf=float(np.asarray(qp_param.w_clf).reshape(-1)[0]),
+            w_cbf=float(np.asarray(qp_param.w_cbf).reshape(-1)[0] if "w_cbf" not in overrides else overrides["w_cbf"]),
+            cbf_slack_max=float(
+                np.asarray(qp_param.cbf_slack_max).reshape(-1)[0]
+                if "cbf_slack_max" not in overrides
+                else overrides["cbf_slack_max"]
+            ),
             A_cbf=A_cbf,
             b_cbf=b_cbf,
             A_clf=A_clf,
             b_clf=b_clf,
             u_min=u_min.copy(),
             u_max=u_max.copy(),
-            f_lin=f_lin,
             delta_min=0.0,
-            w_cbf=float(overrides.get("w_cbf", 0.0)),
-            cbf_slack_max=float(overrides.get("cbf_slack_max", 0.0)),
         )
 
 
