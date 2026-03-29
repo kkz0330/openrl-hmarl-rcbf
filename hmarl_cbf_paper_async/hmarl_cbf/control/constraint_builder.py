@@ -215,6 +215,8 @@ class ConstraintBuilder:
             u_max=u_max.copy(),
             f_lin=f_lin,
             delta_min=0.0,
+            w_cbf=float(overrides.get("w_cbf", 0.0)),
+            cbf_slack_max=float(overrides.get("cbf_slack_max", 0.0)),
         )
 
 

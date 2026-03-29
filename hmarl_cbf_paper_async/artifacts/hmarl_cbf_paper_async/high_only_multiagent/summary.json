@@ -1,0 +1,183 @@
+{
+  "n_agents": 2,
+  "sync_mode": "async",
+  "steps": 80,
+  "terminated": true,
+  "truncated": false,
+  "exhausted_agents": [],
+  "stop_reason": "terminated",
+  "team_success": true,
+  "agent_summaries": {
+    "0": {
+      "reached_goal": true,
+      "unsafe": false,
+      "final_position": [
+        2.000654697418213,
+        0.0
+      ],
+      "final_velocity": [
+        0.08689641952514648,
+        0.0
+      ],
+      "goal": [
+        2.0,
+        0.0
+      ],
+      "chosen_skills": [
+        {
+          "t": 0,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 2,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 4,
+          "skill_id": 4,
+          "skill_name": "cruise"
+        },
+        {
+          "t": 14,
+          "skill_id": 3,
+          "skill_name": "decelerate"
+        },
+        {
+          "t": 24,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 26,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 28,
+          "skill_id": 4,
+          "skill_name": "cruise"
+        },
+        {
+          "t": 38,
+          "skill_id": 4,
+          "skill_name": "cruise"
+        },
+        {
+          "t": 48,
+          "skill_id": 4,
+          "skill_name": "cruise"
+        },
+        {
+          "t": 58,
+          "skill_id": 3,
+          "skill_name": "decelerate"
+        },
+        {
+          "t": 68,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 70,
+          "skill_id": 3,
+          "skill_name": "decelerate"
+        }
+      ],
+      "manual_sequence_provided": []
+    },
+    "1": {
+      "reached_goal": true,
+      "unsafe": false,
+      "final_position": [
+        3.57963587987515e-16,
+        -2.295088529586792
+      ],
+      "final_velocity": [
+        8.644307889239444e-18,
+        -0.09064425528049469
+      ],
+      "goal": [
+        0.0,
+        -2.0
+      ],
+      "chosen_skills": [
+        {
+          "t": 0,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 2,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 4,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 6,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 8,
+          "skill_id": 4,
+          "skill_name": "cruise"
+        },
+        {
+          "t": 18,
+          "skill_id": 4,
+          "skill_name": "cruise"
+        },
+        {
+          "t": 28,
+          "skill_id": 3,
+          "skill_name": "decelerate"
+        },
+        {
+          "t": 38,
+          "skill_id": 3,
+          "skill_name": "decelerate"
+        },
+        {
+          "t": 48,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 50,
+          "skill_id": 3,
+          "skill_name": "decelerate"
+        },
+        {
+          "t": 58,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 60,
+          "skill_id": 3,
+          "skill_name": "decelerate"
+        },
+        {
+          "t": 69,
+          "skill_id": 2,
+          "skill_name": "accelerate"
+        },
+        {
+          "t": 71,
+          "skill_id": 3,
+          "skill_name": "decelerate"
+        }
+      ],
+      "manual_sequence_provided": []
+    }
+  },
+  "obstacles": [],
+  "sequence_end_policy": "stop",
+  "media_path": "artifacts/hmarl_cbf_paper_async/high_only_multiagent/multi_uav_high_only.gif"
+}

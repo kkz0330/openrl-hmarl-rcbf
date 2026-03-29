@@ -14,7 +14,7 @@ env:
   lidar_beams: 32
   lidar_range: 4.5
   lidar_noise_std: 0.0
-  neighbor_radius: 3.0
+  neighbor_radius: 4.0
   max_neighbors: 6
   min_start_goal_separation: 1.2
   min_agent_separation: 0.9
@@ -55,6 +55,8 @@ baseline:
   # QP objective
   r_diag: [1.0, 1.0]
   w_clf: 10.0
+  w_cbf: 100.0
+  cbf_slack_max: 1.5
 
   # Nominal goal-tracking reference
   ref_speed: 1.2

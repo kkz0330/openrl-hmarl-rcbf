@@ -1,0 +1,24 @@
+{
+  "seed": 42,
+  "total_iterations": 200,
+  "episodes_per_iter": 16,
+  "invalid_skill_penalty": -1.0,
+  "last_eval_during_train": {
+    "eval_episode_return_mean": -0.6915326309204102,
+    "eval_success_rate": 0.0,
+    "eval_collision_rate": 1.0,
+    "eval_steps_mean": 27.0,
+    "eval_media": []
+  },
+  "final_eval": {
+    "eval_episode_return_mean": -0.6915326309204102,
+    "eval_success_rate": 0.0,
+    "eval_collision_rate": 1.0,
+    "eval_steps_mean": 27.0,
+    "eval_media": [
+      "artifacts/hmarl_cbf_paper_async/high_level_only/eval_media/episode_000.gif"
+    ]
+  },
+  "run_dir": "artifacts/hmarl_cbf_paper_async/high_level_only",
+  "mode": "high_level_only"
+}

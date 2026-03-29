@@ -1,0 +1,60 @@
+seed: 42
+env:
+  n_agents: 4
+  n_obstacles: 3
+  world_size: 10.0
+  dt: 0.1
+  horizon: 300
+  action_limit: 2.0
+  velocity_limit: 2.0
+  agent_radius: 0.2
+  goal_threshold: 0.3
+  goal_speed_threshold: 0.1
+  lidar_beams: 32
+  lidar_range: 3.0
+  lidar_noise_std: 0.0
+  neighbor_radius: 2.0
+  max_neighbors: 4
+  min_start_goal_separation: 1.0
+  min_agent_separation: 0.8
+  min_obstacle_clearance: 0.4
+  terminate_on_collision: true
+  reward_progress_weight: 0.2
+  reward_time_penalty: 0.01
+  reward_reach_bonus: 1.0
+  reward_collision_penalty: 1.0
+  reward_oob_penalty: 1.0
+  initial_speed_toward_goal: 0.0
+safety:
+  d_min_agent: 0.3
+  d_safe_obs: 0.3
+qp:
+  use_stub_if_unavailable: true
+  ecos_max_iters: 500
+  scs_max_iters: 10000
+  scs_eps: 0.0001
+baseline:
+  cbf_mode: distributed_hocbf54
+  cbf_share_agent: 0.5
+  cbf_share_obs: 1.0
+  cbf_eps: 0.0001
+  cbf_u_max: 2.0
+  cbf_k0: 1.0
+  cbf_k1: 1.0
+  hocbf_gamma_h: 1.0
+  hocbf_gamma_hdot: 1.0
+  clf_k: 1.0
+  r_diag:
+  - 1.0
+  - 1.0
+  w_clf: 10.0
+  w_cbf: 100.0
+  cbf_slack_max: 0.5
+  ref_speed: 1.2
+  speed_kp: 1.2
+  slow_radius: 1.5
+  goal_stop_min_speed: 0.0
+  neighbor_radius: 2.0
+  obstacle_range: 3.0
+  use_input_bounds: true
+  unbounded_action_limit: 1000000.0

@@ -89,8 +89,12 @@ def _accelerate_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
 
 
 def _decelerate_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
-    # Deceleration is allowed at any speed by default.
-    return _state_speed(state) >= float(ctx.get("decelerate_init_min_speed", 0.0))
+    min_speed = float(ctx.get("decelerate_init_min_speed", ctx.get("goal_speed_threshold", 0.1)))
+    return _state_speed(state) >= min_speed
+
+
+def _cruise_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
+    return _state_speed(state) >= float(ctx.get("cruise_min_speed", 0.2))
 
 
 def _goal_reached(state: AgentState, ctx: Dict[str, Any]) -> bool:
@@ -114,7 +118,15 @@ def _turn_termination_set(state: AgentState, ctx: Dict[str, Any]) -> bool:
 def _accelerate_termination_set(state: AgentState, ctx: Dict[str, Any]) -> bool:
     if _goal_reached(state, ctx):
         return True
-    return _state_speed(state) >= float(ctx.get("target_speed", 1.2))
+    speed = _state_speed(state)
+    mode = str(ctx.get("accelerate_mode", "goal_tracking")).strip().lower()
+    if mode in {"hmarl_like", "along_velocity", "velocity_increment"}:
+        delta_speed = float(max(ctx.get("accelerate_delta_speed", 0.3), 0.0))
+        start_speed = float(ctx.get("start_speed", speed))
+        target_speed = start_speed + delta_speed
+        tol = float(ctx.get("accelerate_stop_eps", 0.05))
+        return speed >= max(0.0, target_speed - tol)
+    return speed >= float(ctx.get("target_speed", 1.2))
 
 
 def _decelerate_termination_set(state: AgentState, ctx: Dict[str, Any]) -> bool:
@@ -254,14 +266,10 @@ def _accelerate_policy(obs: AgentObsLow, ctx: Dict[str, Any]) -> np.ndarray:
     goal_dir = _goal_dir_from_obs(obs)
     mode = str(ctx.get("accelerate_mode", "goal_tracking")).strip().lower()
     if mode in {"hmarl_like", "along_velocity", "velocity_increment"}:
-        delta_speed = float(max(ctx.get("accelerate_delta_speed", 0.2), 0.0))
-        target_speed = float(
-            max(
-                ctx.get("target_speed", 1.2),
-                float(ctx.get("start_speed", speed)) + float(ctx.get("accelerate_delta_floor", 0.0)),
-            )
-        )
-        dv = min(delta_speed, max(0.0, target_speed - speed))
+        delta_speed = float(max(ctx.get("accelerate_delta_speed", 0.3), 0.0))
+        start_speed = float(ctx.get("start_speed", speed))
+        target_speed = start_speed + delta_speed
+        dv = max(0.0, target_speed - speed)
         if speed > 1e-4:
             move_dir = _unit(vel)
         else:
@@ -341,7 +349,14 @@ def _turn_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]
 def _accelerate_intrinsic_reward(s_i: np.ndarray, a_i: np.ndarray, ctx: Dict[str, Any]) -> float:
     base = _intrinsic_reward_common(s_i, a_i, ctx)
     speed, _, _, _ = _state_vec_speed_heading_goal(s_i, ctx)
-    bonus = float(ctx.get("w_accel_target", 0.03)) * min(speed, float(ctx.get("target_speed", 1.2)))
+    mode = str(ctx.get("accelerate_mode", "goal_tracking")).strip().lower()
+    if mode in {"hmarl_like", "along_velocity", "velocity_increment"}:
+        delta_speed = float(max(ctx.get("accelerate_delta_speed", 0.3), 0.0))
+        start_speed = float(ctx.get("start_speed", speed))
+        target = start_speed + delta_speed
+        bonus = float(ctx.get("w_accel_target", 0.03)) * float(np.exp(-abs(speed - target)))
+    else:
+        bonus = float(ctx.get("w_accel_target", 0.03)) * min(speed, float(ctx.get("target_speed", 1.2)))
     return float(base + bonus)
 
 
@@ -416,7 +431,7 @@ def build_default_skill_library(max_duration: int = 20) -> List[SkillSpec]:
         SkillSpec(
             skill_id=SKILL_CRUISE,
             name="cruise",
-            initiation_set_fn=_default_initiation,
+            initiation_set_fn=_cruise_initiation,
             termination_set_fn=_cruise_termination_set,
             max_duration=max_duration,
             termination_fn=lambda s, c, tau: _termination_with_timeout(s, c, tau, _cruise_termination_set),

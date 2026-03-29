@@ -136,6 +136,10 @@ def main() -> None:
     mean_return_sum = 0.0
     feasible_sum = 0.0
     feasible_cnt = 0
+    cbf_slack_sum = 0.0
+    cbf_slack_max = 0.0
+    cbf_slack_active = 0
+    cbf_slack_cnt = 0
 
     render_gif = bool(args.render_gif) or not bool(args.render_png)
     n_episodes = max(1, int(args.episodes))
@@ -169,6 +173,12 @@ def main() -> None:
                 unsafe_any[aid] = bool(unsafe_any[aid] or bool(info.get("unsafe_flags", {}).get(aid, False)))
                 feasible_sum += 1.0 if bool(solutions[aid].feasible) else 0.0
                 feasible_cnt += 1
+                cbf_slack = np.asarray(solutions[aid].cbf_slack if solutions[aid].cbf_slack is not None else [], dtype=np.float32).reshape(-1)
+                if cbf_slack.size > 0:
+                    cbf_slack_sum += float(np.sum(cbf_slack))
+                    cbf_slack_max = max(cbf_slack_max, float(np.max(cbf_slack)))
+                    cbf_slack_active += int(np.sum(cbf_slack > 1e-6))
+                    cbf_slack_cnt += int(cbf_slack.size)
 
         n_agents = max(1, len(agent_ids))
         safe_reach_count = int(sum(1 for aid in agent_ids if reached_any[aid] and not unsafe_any[aid]))
@@ -223,6 +233,9 @@ def main() -> None:
         "success_round_rate": float(success_rounds / max(1, n_episodes)),
         "episode_return_mean": float(mean_return_sum / max(1, n_episodes)),
         "qp_feasible_rate": float(feasible_sum / max(1, feasible_cnt)),
+        "cbf_slack_mean": float(cbf_slack_sum / max(1, cbf_slack_cnt)),
+        "cbf_slack_max": float(cbf_slack_max),
+        "cbf_slack_active_rate": float(cbf_slack_active / max(1, cbf_slack_cnt)),
         "run_dir": str(run_dir),
     }
 
@@ -234,9 +247,11 @@ def main() -> None:
     print(f"success_rounds: {success_rounds}/{n_episodes} ({summary['success_round_rate']:.4f})")
     print(f"mean_return: {summary['episode_return_mean']:.4f}")
     print(f"qp_feasible_rate: {summary['qp_feasible_rate']:.4f}")
+    print(f"cbf_slack_mean: {summary['cbf_slack_mean']:.6f}")
+    print(f"cbf_slack_max: {summary['cbf_slack_max']:.6f}")
+    print(f"cbf_slack_active_rate: {summary['cbf_slack_active_rate']:.4f}")
     print(f"RUN_DIR={run_dir}")
 
 
 if __name__ == "__main__":
     main()
-

@@ -1,0 +1,51 @@
+{
+  "steps": 35,
+  "terminated": false,
+  "truncated": false,
+  "sequence_exhausted": true,
+  "stop_reason": "manual_sequence_exhausted",
+  "reached_goal": false,
+  "unsafe": false,
+  "final_position": [
+    -1.4450111389160156,
+    0.6374311447143555
+  ],
+  "final_velocity": [
+    0.1937442272901535,
+    0.0600806400179863
+  ],
+  "goal": [
+    4.0,
+    0.0
+  ],
+  "chosen_skills": [
+    {
+      "t": 0,
+      "skill_id": 2,
+      "skill_name": "accelerate"
+    },
+    {
+      "t": 10,
+      "skill_id": 0,
+      "skill_name": "turn_left"
+    },
+    {
+      "t": 15,
+      "skill_id": 4,
+      "skill_name": "cruise"
+    },
+    {
+      "t": 25,
+      "skill_id": 3,
+      "skill_name": "decelerate"
+    }
+  ],
+  "manual_sequence_provided": [
+    "accelerate",
+    "turn_left",
+    "cruise",
+    "decelerate"
+  ],
+  "sequence_end_policy": "stop",
+  "media_path": "artifacts/hmarl_cbf_paper_async/high_only/single_uav_high_only.gif"
+}

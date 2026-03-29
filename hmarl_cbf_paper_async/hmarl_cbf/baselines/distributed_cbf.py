@@ -23,6 +23,8 @@ class DistributedCBFBaselineConfig:
     clf_k: float = 1.0
     r_diag: Tuple[float, float] = (1.0, 1.0)
     w_clf: float = 10.0
+    w_cbf: float = 100.0
+    cbf_slack_max: float = 0.5
     ref_speed: float = 1.2
     speed_kp: float = 1.2
     slow_radius: float = 1.5
@@ -51,6 +53,8 @@ class DistributedCBFBaselineConfig:
             clf_k=float(data.get("clf_k", 1.0)),
             r_diag=(float(r_arr[0]), float(r_arr[1])),
             w_clf=float(data.get("w_clf", 10.0)),
+            w_cbf=float(data.get("w_cbf", 100.0)),
+            cbf_slack_max=float(data.get("cbf_slack_max", 0.5)),
             ref_speed=float(data.get("ref_speed", 1.2)),
             speed_kp=float(data.get("speed_kp", 1.2)),
             slow_radius=float(data.get("slow_radius", 1.5)),
@@ -174,6 +178,8 @@ class DistributedCBFBaselineController:
                 "target_speed": float(self.config.ref_speed),
                 "slow_radius": float(self.config.slow_radius),
                 "goal_stop_min_speed": float(self.config.goal_stop_min_speed),
+                "w_cbf": float(self.config.w_cbf),
+                "cbf_slack_max": float(self.config.cbf_slack_max),
             }
             problem = self.constraint_builder.build_for_agent(
                 state_i=state_i,

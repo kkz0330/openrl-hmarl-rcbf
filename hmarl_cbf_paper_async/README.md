@@ -15,6 +15,14 @@ This folder is a runnable subset of the original `hmarl_cbf` project, copied int
   - `python -m hmarl_cbf.train.run_distributed_cbf_baseline --config configs/hmarl_cbf/baseline_distributed_cbf.yaml`
 - Random-scene checkpoint evaluation:
   - `python -m hmarl_cbf.train.eval_checkpoint_random --checkpoint <path-to-last.pt>`
+- High-level-skills-only single-UAV simulation:
+  - `python -m hmarl_cbf.train.eval_high_level_skills_only --skill-sequence accelerate,turn_left,cruise,decelerate --render-gif`
+- High-level-skills-only multi-UAV simulation:
+  - `python -m hmarl_cbf.train.eval_high_level_multiagent_skills_only --skill-sequences "accelerate,turn_left,cruise;accelerate,turn_right,cruise" --render-gif`
+- High-level-only RL on a fixed single-UAV scene:
+  - `python -m hmarl_cbf.train.train_high_level_skills_only --config configs/hmarl_cbf/default_async_onpolicy_gcbfplus.yaml --total-iterations 200 --episodes-per-iter 16 --eval-interval 20 --eval-episodes 8 --final-render-gif`
+- High-level-only RL on a fixed multi-UAV scene:
+  - `python -m hmarl_cbf.train.train_high_level_multiagent_skills_only --config configs/hmarl_cbf/default_async_onpolicy_gcbfplus.yaml --total-iterations 200 --episodes-per-iter 16 --eval-interval 20 --eval-episodes 8 --sync-mode async`
 
 ## Minimal dependencies
 

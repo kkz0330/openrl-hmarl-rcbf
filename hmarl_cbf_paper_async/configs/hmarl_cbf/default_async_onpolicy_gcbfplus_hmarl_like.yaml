@@ -54,7 +54,7 @@ skills:
     accelerate_delta_speed: 0.2
     accelerate_heading_blend: 0.0
     decelerate_delta_speed: 0.2
-    decelerate_init_min_speed: 0.0
+    decelerate_init_min_speed: 0.1
     decelerate_mode: hmarl_like
     decelerate_stop_eps: 0.05
     decelerate_kv: 1.5
@@ -98,6 +98,7 @@ train:
   high_entropy_coef_start: 0.05
   high_entropy_coef_end: 0.01
   high_entropy_decay_iters: 700
+  team_success_bonus: 2.0
   gamma_high: 0.99
   lam_high: 0.95
   gamma_low: 0.99

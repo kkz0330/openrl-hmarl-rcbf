@@ -146,6 +146,8 @@ class QPProblem:
     u_max: TensorLike
     f_lin: TensorLike | None = None
     delta_min: float = 0.0
+    w_cbf: float = 0.0
+    cbf_slack_max: float = 0.0
 
 
 @dataclass(slots=True)
@@ -155,6 +157,7 @@ class QPSolution:
     objective: TensorLike
     feasible: bool
     solver_status: str
+    cbf_slack: TensorLike | None = None
 
 
 @dataclass(slots=True)

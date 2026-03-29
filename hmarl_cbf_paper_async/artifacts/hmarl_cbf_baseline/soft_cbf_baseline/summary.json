@@ -1,0 +1,12 @@
+{
+  "episodes": 20,
+  "seed_base": 42,
+  "overall_safe_reach_ratio": 1.0,
+  "success_round_rate": 1.0,
+  "episode_return_mean": 50.85067161470759,
+  "qp_feasible_rate": 1.0,
+  "cbf_slack_mean": 8.046123460862689e-06,
+  "cbf_slack_max": 0.046007633209228516,
+  "cbf_slack_active_rate": 0.00017488632388947185,
+  "run_dir": "artifacts/hmarl_cbf_baseline/soft_cbf_baseline"
+}

@@ -58,11 +58,24 @@ class DifferentiableQPSolver:
             f_lin = -(r_diag * u_ref)
         action = (-f_lin / np.maximum(r_diag, R_DIAG_MIN)).astype(np.float32)
         action = np.clip(action, np.asarray(problem.u_min, dtype=np.float32), np.asarray(problem.u_max, dtype=np.float32))
-        slack = np.asarray([max(problem.delta_min, 0.0)], dtype=np.float32)
+        clf_violation = 0.0
+        if np.asarray(problem.A_clf).size > 0:
+            lhs = np.asarray(problem.A_clf, dtype=np.float32) @ action
+            rhs = np.asarray(problem.b_clf, dtype=np.float32).reshape(-1)
+            clf_violation = float(max(0.0, np.max(lhs - rhs)))
+        slack = np.asarray([max(problem.delta_min, clf_violation)], dtype=np.float32)
+        cbf_slack = np.zeros((int(np.asarray(problem.A_cbf).shape[0]),), dtype=np.float32)
+        if np.asarray(problem.A_cbf).size > 0 and float(problem.w_cbf) > 0.0:
+            lhs = np.asarray(problem.A_cbf, dtype=np.float32) @ action
+            rhs = np.asarray(problem.b_cbf, dtype=np.float32).reshape(-1)
+            cbf_slack = np.maximum(lhs - rhs, 0.0).astype(np.float32)
+            if float(problem.cbf_slack_max) > 0.0:
+                cbf_slack = np.minimum(cbf_slack, float(problem.cbf_slack_max)).astype(np.float32)
         objective = np.asarray([0.0], dtype=np.float32)
         return QPSolution(
             action=action,
             slack=slack,
+            cbf_slack=cbf_slack,
             objective=objective,
             feasible=True,
             solver_status="stub_clipped",
@@ -75,22 +88,29 @@ class DifferentiableQPSolver:
 
         u = cp.Variable(n_u)
         delta = cp.Variable(1, nonneg=True)
+        eps_cbf = cp.Variable(m_cbf, nonneg=True) if m_cbf > 0 else None
         r_diag = cp.Parameter(n_u, nonneg=True)
         f_lin = cp.Parameter(n_u)
         w_clf = cp.Parameter(1, nonneg=True)
+        w_cbf = cp.Parameter(1, nonneg=True) if m_cbf > 0 else None
         A_cbf = cp.Parameter((m_cbf, n_u)) if m_cbf > 0 else None
         b_cbf = cp.Parameter(m_cbf) if m_cbf > 0 else None
         A_clf = cp.Parameter((m_clf, n_u)) if m_clf > 0 else None
         b_clf = cp.Parameter(m_clf) if m_clf > 0 else None
         u_min = cp.Parameter(n_u)
         u_max = cp.Parameter(n_u)
+        cbf_slack_max = cp.Parameter(1, nonneg=True) if m_cbf > 0 else None
 
         # DPP-compliant diagonal-quadratic form:
         # 0.5 * u^T diag(r_diag) u + f_lin^T u + w_clf * delta
         objective = 0.5 * cp.sum(cp.multiply(r_diag, cp.square(u))) + (f_lin @ u) + cp.sum(cp.multiply(w_clf, delta))
+        if m_cbf > 0 and eps_cbf is not None and w_cbf is not None:
+            objective += cp.sum(cp.multiply(w_cbf, eps_cbf))
         constraints = [u >= u_min, u <= u_max, delta >= 0]
         if m_cbf > 0:
-            constraints.append(A_cbf @ u <= b_cbf)
+            constraints.append(A_cbf @ u <= b_cbf + eps_cbf)
+            constraints.append(eps_cbf >= 0)
+            constraints.append(eps_cbf <= cp.multiply(np.ones((m_cbf,), dtype=np.float32), cbf_slack_max))
         if m_clf > 0:
             constraints.append(A_clf @ u <= b_clf + delta)
 
@@ -100,10 +120,13 @@ class DifferentiableQPSolver:
 
         params = [r_diag, f_lin, w_clf, u_min, u_max]
         if m_cbf > 0:
-            params.extend([A_cbf, b_cbf])
+            params.extend([w_cbf, cbf_slack_max, A_cbf, b_cbf])
         if m_clf > 0:
             params.extend([A_clf, b_clf])
-        layer = CvxpyLayer(problem, parameters=params, variables=[u, delta])
+        variables = [u, delta]
+        if m_cbf > 0 and eps_cbf is not None:
+            variables.append(eps_cbf)
+        layer = CvxpyLayer(problem, parameters=params, variables=variables)
         self._cache[cache_key] = layer
         return layer
 
@@ -138,6 +161,11 @@ class DifferentiableQPSolver:
         if A_cbf.shape[0] > 0:
             params.extend(
                 [
+                    torch.as_tensor(np.asarray([max(problem.w_cbf, 0.0)], dtype=np.float32), device=device),
+                    torch.as_tensor(
+                        np.asarray([max(problem.cbf_slack_max, 0.0)], dtype=np.float32),
+                        device=device,
+                    ),
                     torch.as_tensor(A_cbf, device=device),
                     torch.as_tensor(b_cbf, device=device),
                 ]
@@ -151,25 +179,33 @@ class DifferentiableQPSolver:
             )
 
         try:
-            u_sol, delta_sol = layer(
+            outputs = layer(
                 *params,
                 solver_args={
                     "solve_method": "ECOS",
                     "max_iters": self.ecos_max_iters,
                 },
             )
+            u_sol, delta_sol = outputs[0], outputs[1]
+            eps_cbf_sol = outputs[2] if A_cbf.shape[0] > 0 and len(outputs) > 2 else None
             action = u_sol.detach().cpu().numpy().astype(np.float32)
             slack = delta_sol.detach().cpu().numpy().astype(np.float32)
+            cbf_slack = (
+                eps_cbf_sol.detach().cpu().numpy().astype(np.float32)
+                if eps_cbf_sol is not None
+                else np.zeros((A_cbf.shape[0],), dtype=np.float32)
+            )
             return QPSolution(
                 action=action,
                 slack=slack,
+                cbf_slack=cbf_slack,
                 objective=np.asarray([0.0], dtype=np.float32),
                 feasible=True,
                 solver_status="optimal",
             )
         except Exception:
             try:
-                u_sol, delta_sol = layer(
+                outputs = layer(
                     *params,
                     solver_args={
                         "solve_method": "SCS",
@@ -177,11 +213,19 @@ class DifferentiableQPSolver:
                         "eps": self.scs_eps,
                     },
                 )
+                u_sol, delta_sol = outputs[0], outputs[1]
+                eps_cbf_sol = outputs[2] if A_cbf.shape[0] > 0 and len(outputs) > 2 else None
                 action = u_sol.detach().cpu().numpy().astype(np.float32)
                 slack = delta_sol.detach().cpu().numpy().astype(np.float32)
+                cbf_slack = (
+                    eps_cbf_sol.detach().cpu().numpy().astype(np.float32)
+                    if eps_cbf_sol is not None
+                    else np.zeros((A_cbf.shape[0],), dtype=np.float32)
+                )
                 return QPSolution(
                     action=action,
                     slack=slack,
+                    cbf_slack=cbf_slack,
                     objective=np.asarray([0.0], dtype=np.float32),
                     feasible=True,
                     solver_status="optimal_scs",

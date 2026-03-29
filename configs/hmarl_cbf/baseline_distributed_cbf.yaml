@@ -56,6 +56,8 @@ baseline:
   # QP objective
   r_diag: [1.0, 1.0]
   w_clf: 10.0
+  w_cbf: 100.0
+  cbf_slack_max: 0.5
 
   # Nominal goal-tracking reference
   ref_speed: 1.2

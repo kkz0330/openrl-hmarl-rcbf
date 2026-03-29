@@ -44,17 +44,21 @@ skills:
     action_limit: 2.0
     turn_min_speed: 0.2
     turn_target_angle: 0.6
-    turn_heading_tol: 0.2
+    turn_heading_tol: 0.1
     turn_keep_speed: false
     turn_vmag: 1.1
     turn_track_kp: 2.0
     target_speed: 1.4
-    accelerate_mode: goal_tracking
+    accelerate_mode: velocity_increment
+    accelerate_delta_speed: 0.3
+    accelerate_stop_eps: 0.05
     accelerate_heading_blend: 0.0
+    decelerate_init_min_speed: 0.1
     decelerate_target_speed: 0.05
     decelerate_mode: zero_track
     decelerate_stop_eps: 0.05
     decelerate_kv: 1.5
+    cruise_min_speed: 0.2
     ref_speed: 1.2
     slow_radius: 1.5
     goal_stop_min_speed: 0.0
@@ -96,6 +100,10 @@ train:
   high_entropy_coef_start: 0.05
   high_entropy_coef_end: 0.01
   high_entropy_decay_iters: 700
+  goal_visibility_reward: 0.02
+  goal_visibility_improvement_reward: 0.3
+  goal_heading_alignment_penalty: 0.0
+  team_success_bonus: 2.0
   gamma_high: 0.99
   lam_high: 0.95
   gamma_low: 0.99
