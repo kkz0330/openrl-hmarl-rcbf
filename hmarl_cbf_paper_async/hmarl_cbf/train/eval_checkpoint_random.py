@@ -6,7 +6,7 @@ import json
 import math
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -53,6 +53,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--render-png", action="store_true", help="Render selected evaluation episodes to static PNG.")
     parser.add_argument("--render-episodes", type=int, default=0, help="Number of leading episodes to render.")
     parser.add_argument("--fps", type=int, default=8, help="GIF fps.")
+    parser.add_argument(
+        "--scenario",
+        type=str,
+        default="",
+        choices=["", "corridor_8uav_dual_passage"],
+        help="Optional built-in fixed scenario.",
+    )
+    parser.add_argument(
+        "--states-json",
+        type=str,
+        default="",
+        help="Optional JSON array of agent states. Overrides random reset when provided.",
+    )
+    parser.add_argument(
+        "--obstacles-json",
+        type=str,
+        default="",
+        help="Optional JSON array of circular obstacles. Use with --states-json for fixed scenes.",
+    )
     return parser.parse_args()
 
 
@@ -85,6 +104,87 @@ def _make_output_dir(output_root: Path, run_name: str) -> Path:
         out = output_root / time.strftime("eval_%Y%m%d_%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
     return out
+
+
+def _corridor_8uav_dual_passage(world_size: float, agent_radius: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    x_left = -6.0
+    x_right = 6.0
+    ys = [-3.0, -1.0, 1.0, 3.0]
+    states: List[Dict[str, Any]] = []
+    for idx, y in enumerate(ys):
+        states.append(
+            {
+                "position": np.asarray([x_left, y], dtype=np.float32),
+                "velocity": np.asarray([0.0, 0.0], dtype=np.float32),
+                "goal": np.asarray([x_right, y], dtype=np.float32),
+                "radius": float(agent_radius),
+            }
+        )
+    for idx, y in enumerate(ys, start=len(ys)):
+        states.append(
+            {
+                "position": np.asarray([x_right, y], dtype=np.float32),
+                "velocity": np.asarray([0.0, 0.0], dtype=np.float32),
+                "goal": np.asarray([x_left, y], dtype=np.float32),
+                "radius": float(agent_radius),
+            }
+        )
+
+    obstacles: List[Dict[str, Any]] = [
+        {"center": np.asarray([0.0, -2.7], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([0.0, -0.9], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([0.0, 0.9], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([0.0, 2.7], dtype=np.float32), "radius": 0.9},
+    ]
+    return states, obstacles
+
+
+def _parse_states(raw: str, agent_radius: float) -> List[Dict[str, Any]]:
+    payload = json.loads(raw)
+    if not isinstance(payload, list) or len(payload) == 0:
+        raise ValueError("states-json must be a non-empty JSON list")
+    states: List[Dict[str, Any]] = []
+    for idx, item in enumerate(payload):
+        if not isinstance(item, dict):
+            raise ValueError(f"state {idx} must be a JSON object")
+        states.append(
+            {
+                "position": np.asarray(item["position"], dtype=np.float32).reshape(2),
+                "velocity": np.asarray(item.get("velocity", [0.0, 0.0]), dtype=np.float32).reshape(2),
+                "goal": np.asarray(item["goal"], dtype=np.float32).reshape(2),
+                "radius": float(item.get("radius", agent_radius)),
+            }
+        )
+    return states
+
+
+def _parse_obstacles(raw: str) -> List[Dict[str, Any]]:
+    payload = json.loads(raw)
+    if not isinstance(payload, list):
+        raise ValueError("obstacles-json must be a JSON list")
+    obstacles: List[Dict[str, Any]] = []
+    for idx, item in enumerate(payload):
+        if not isinstance(item, dict):
+            raise ValueError(f"obstacle {idx} must be a JSON object")
+        obstacles.append(
+            {
+                "center": np.asarray(item["center"], dtype=np.float32).reshape(2),
+                "radius": float(item["radius"]),
+            }
+        )
+    return obstacles
+
+
+def _resolve_fixed_scene(args: argparse.Namespace, cfg: Dict[str, Any]) -> Tuple[List[Dict[str, Any]] | None, List[Dict[str, Any]] | None]:
+    env_cfg = dict(cfg["env"])
+    agent_radius = float(env_cfg.get("agent_radius", 0.2))
+    world_size = float(env_cfg.get("world_size", 10.0))
+    if args.scenario == "corridor_8uav_dual_passage":
+        return _corridor_8uav_dual_passage(world_size=world_size, agent_radius=agent_radius)
+    if str(args.states_json).strip():
+        obstacles_raw = str(args.obstacles_json).strip() or "[]"
+        return _parse_states(str(args.states_json), agent_radius=agent_radius), _parse_obstacles(obstacles_raw)
+    return None, None
 
 
 def _render_episode(
@@ -230,8 +330,13 @@ def _evaluate_once(
     max_steps: int,
     deterministic: bool,
     capture_trace: bool = False,
+    fixed_states: List[Dict[str, Any]] | None = None,
+    fixed_obstacles: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
-    obs, _ = trainer.env.reset(seed=int(scene_seed))
+    reset_options: Dict[str, Any] | None = None
+    if fixed_states is not None:
+        reset_options = {"states": fixed_states, "obstacles": fixed_obstacles or []}
+    obs, _ = trainer.env.reset(seed=int(scene_seed), options=reset_options)
     agent_ids = sorted(obs.keys())
     trainer.skill_runtime.reset(agent_ids)
     trainer.coordinator.reset()
@@ -339,6 +444,11 @@ def main() -> None:
 
     payload: Dict[str, Any] = torch.load(ckpt_path, map_location="cpu")
     cfg = _load_config(args=args, ckpt_payload=payload, ckpt_path=ckpt_path)
+    fixed_states, fixed_obstacles = _resolve_fixed_scene(args=args, cfg=cfg)
+    if fixed_states is not None:
+        cfg["env"] = dict(cfg["env"])
+        cfg["env"]["n_agents"] = len(fixed_states)
+        cfg["env"]["n_obstacles"] = len(fixed_obstacles or [])
 
     # Enforce per-episode simulation duration (seconds -> horizon steps).
     dt = float(cfg["env"]["dt"])
@@ -372,6 +482,8 @@ def main() -> None:
             max_steps=horizon_steps,
             deterministic=bool(args.deterministic),
             capture_trace=bool(render_requested and ep < render_limit),
+            fixed_states=fixed_states,
+            fixed_obstacles=fixed_obstacles,
         )
         media_path = ""
         if render_requested and ep < render_limit and row["trace_positions"]:
@@ -417,6 +529,8 @@ def main() -> None:
         "horizon_steps": int(horizon_steps),
         "seed_base": int(args.seed),
         "deterministic": bool(args.deterministic),
+        "scenario": str(args.scenario),
+        "fixed_scene": bool(fixed_states is not None),
         "render_requested": bool(render_requested and render_limit > 0),
         "render_format": "gif" if render_requested and render_gif else ("png" if render_requested else ""),
         "render_episodes": int(render_limit),
