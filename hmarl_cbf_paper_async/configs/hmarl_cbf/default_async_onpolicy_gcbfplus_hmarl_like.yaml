@@ -31,7 +31,7 @@ synchronization:
 safety:
   d_min_agent: 0.3
   d_safe_obs: 0.3
-  boundary_cbf: true
+  boundary_cbf: false
   boundary_margin: 0.3
 skills:
   names:
@@ -88,6 +88,11 @@ low_level_qp:
   h_diag_max: 20.0
   h_offdiag_abs_max: 2.0
   f_abs_max: 8.0
+  f_residual_reference_enabled: true
+  f_ref_speed: 1.2
+  f_ref_kp: 1.2
+  f_ref_slow_radius: 0.5
+  f_ref_goal_stop_min_speed: 0.0
   phi_log_std_min: -5.0
   phi_log_std_max: -1.5
   w_clf: 10.0
@@ -124,9 +129,9 @@ train:
   low_reward_mix_eta: 0.35
   low_reward_mix_divide_by_n_agents: true
   high_option_progress_coef: 0.5
-  high_option_boundary_recovery_coef: 0.8
-  high_option_boundary_threshold: 1.0
-  low_reference_pretrain_iters: 150
+  high_option_boundary_recovery_coef: 0.0
+  high_option_boundary_threshold: 0.0
+  low_reference_pretrain_iters: 250
   low_update_mode_pretrain: reference_regression
   low_update_mode_main: onpolicy_ppo
   low_update_mode: onpolicy_ppo

@@ -37,6 +37,11 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         clf_k: float = 1.0,
         hocbf_gamma_h: float = 1.0,
         hocbf_gamma_hdot: float = 1.0,
+        f_residual_reference_enabled: bool = True,
+        f_ref_speed: float = 1.2,
+        f_ref_kp: float = 1.2,
+        f_ref_slow_radius: float = 1.5,
+        f_ref_goal_stop_min_speed: float = 0.0,
     ) -> None:
         if torch is None:
             raise RuntimeError("PyTorch is required to instantiate LowLevelQPPolicy")
@@ -50,6 +55,11 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         self.f_abs_max = float(f_abs_max)
         self.phi_log_std_min = float(phi_log_std_min)
         self.phi_log_std_max = float(phi_log_std_max)
+        self.f_residual_reference_enabled = bool(f_residual_reference_enabled)
+        self.f_ref_speed = float(f_ref_speed)
+        self.f_ref_kp = float(f_ref_kp)
+        self.f_ref_slow_radius = float(f_ref_slow_radius)
+        self.f_ref_goal_stop_min_speed = float(f_ref_goal_stop_min_speed)
         if self.h_diag_min <= 0.0:
             raise ValueError("h_diag_min must be > 0 for strict positive definiteness")
         if self.h_diag_max < self.h_diag_min:
@@ -123,13 +133,66 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         )
         return mu, log_std
 
+    @staticmethod
+    def _unit(vec: Tensor) -> Tensor:
+        norm = torch.linalg.norm(vec, dim=-1, keepdim=True)
+        fallback = torch.zeros_like(vec)
+        fallback[..., 0] = 1.0
+        return torch.where(norm > 1e-8, vec / torch.clamp(norm, min=1e-8), fallback)
+
+    def _f_reference(self, obs_low: Tensor, H_mat: Tensor) -> Tensor:
+        pos = obs_low[:, 0:2]
+        vel = obs_low[:, 2:4]
+        goal_rel = obs_low[:, 4:6]
+        goal_dist = torch.linalg.norm(goal_rel, dim=-1, keepdim=True)
+        goal_dir = self._unit(goal_rel)
+
+        speed_des = torch.full_like(goal_dist, self.f_ref_speed)
+        if self.f_ref_slow_radius > 0.0:
+            speed_scale = torch.clamp(goal_dist / max(self.f_ref_slow_radius, 1e-8), min=0.0, max=1.0)
+            speed_des = torch.maximum(
+                torch.full_like(speed_des, self.f_ref_goal_stop_min_speed),
+                speed_des * speed_scale,
+            )
+        v_des = speed_des * goal_dir
+        a_des = self.f_ref_kp * (v_des - vel)
+        return -torch.matmul(H_mat, a_des.unsqueeze(-1)).squeeze(-1)
+
     def decode_phi(self, phi: Tensor) -> QPParam:
         batch = phi.shape[0]
         chol_dim = (self.action_dim * (self.action_dim + 1)) // 2
         chol_vec = phi[:, :chol_dim]
         f_raw = phi[:, chol_dim:]
         H_mat = self._build_spd_h(chol_vec)
-        f_lin = self.f_abs_max * torch.tanh(f_raw)
+        f_residual = self.f_abs_max * torch.tanh(f_raw)
+        f_lin = f_residual
+        if self.f_residual_reference_enabled:
+            raise RuntimeError("decode_phi(phi) requires obs_low when f_residual_reference_enabled=True")
+        return QPParam(
+            H_mat=H_mat,
+            f_lin=f_lin,
+            w_clf=self._fixed_w_clf.expand(batch, -1),
+            w_cbf=self._fixed_w_cbf.expand(batch, -1),
+            cbf_slack_max=self._fixed_cbf_slack_max.expand(batch, -1),
+            cbf_k0=self._fixed_cbf_k0.expand(batch, -1),
+            cbf_k1=self._fixed_cbf_k1.expand(batch, -1),
+            clf_k=self._fixed_clf_k.expand(batch, -1),
+            hocbf_gamma_h=self._fixed_hocbf_gamma_h.expand(batch, -1),
+            hocbf_gamma_hdot=self._fixed_hocbf_gamma_hdot.expand(batch, -1),
+        )
+
+    def _decode_phi_with_obs(self, obs_low: Tensor, phi: Tensor) -> QPParam:
+        batch = phi.shape[0]
+        chol_dim = (self.action_dim * (self.action_dim + 1)) // 2
+        chol_vec = phi[:, :chol_dim]
+        f_raw = phi[:, chol_dim:]
+        H_mat = self._build_spd_h(chol_vec)
+        f_residual = self.f_abs_max * torch.tanh(f_raw)
+        if self.f_residual_reference_enabled:
+            f_ref = self._f_reference(obs_low, H_mat)
+            f_lin = f_ref + f_residual
+        else:
+            f_lin = f_residual
         return QPParam(
             H_mat=H_mat,
             f_lin=f_lin,
@@ -155,7 +218,7 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
             phi = dist.rsample()
             logp = torch.sum(dist.log_prob(phi), dim=-1)
             entropy = torch.sum(dist.entropy(), dim=-1)
-        qp_param = self.decode_phi(phi)
+        qp_param = self._decode_phi_with_obs(obs_low, phi)
         return {
             "phi": phi,
             "mu": mu,
@@ -171,7 +234,7 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         dist = torch.distributions.Normal(mu, std)
         logp = torch.sum(dist.log_prob(phi), dim=-1)
         entropy = torch.sum(dist.entropy(), dim=-1)
-        qp_param = self.decode_phi(phi)
+        qp_param = self._decode_phi_with_obs(obs_low, phi)
         return {
             "mu": mu,
             "log_std": log_std,
@@ -182,7 +245,7 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
 
     def forward(self, obs_low: Tensor, skill_id: Tensor) -> QPParam:
         mu, _ = self._phi_distribution(obs_low, skill_id)
-        return self.decode_phi(mu)
+        return self._decode_phi_with_obs(obs_low, mu)
 
     def low_value(self, obs_low: Tensor, skill_id: Tensor) -> Tensor:
         fused = self._encode(obs_low, skill_id)

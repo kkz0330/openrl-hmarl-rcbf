@@ -23,6 +23,7 @@ except ImportError as exc:  # pragma: no cover - runtime entrypoint
 from hmarl_cbf.buffer import HierRolloutBuffer
 from hmarl_cbf.control import ConstraintBuilder, DifferentiableQPSolver, LowLevelSafeController, SyncCoordinator
 from hmarl_cbf.env import MultiUAV2DEnv
+from hmarl_cbf.eval import EpisodeTrace, TrajectoryRenderer
 from hmarl_cbf.policies import HighLevelPolicy, LowLevelQPPolicy
 from hmarl_cbf.skills import SkillRuntimeManager, build_default_skill_library
 from hmarl_cbf.train import TrainerSyncOnPolicy
@@ -48,6 +49,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--seconds", type=float, default=30.0, help="Per-episode simulated duration in seconds.")
     parser.add_argument("--seed", type=int, default=12345, help="Base seed; scene seed = base + episode index.")
     parser.add_argument("--deterministic", action="store_true", help="Use deterministic high-level skill selection.")
+    parser.add_argument("--render-gif", action="store_true", help="Render selected evaluation episodes to GIF.")
+    parser.add_argument("--render-png", action="store_true", help="Render selected evaluation episodes to static PNG.")
+    parser.add_argument("--render-episodes", type=int, default=0, help="Number of leading episodes to render.")
+    parser.add_argument("--fps", type=int, default=8, help="GIF fps.")
     return parser.parse_args()
 
 
@@ -82,6 +87,18 @@ def _make_output_dir(output_root: Path, run_name: str) -> Path:
     return out
 
 
+def _render_episode(
+    renderer: TrajectoryRenderer,
+    trace: EpisodeTrace,
+    out_path: Path,
+    render_gif: bool,
+    fps: int,
+) -> str:
+    if render_gif:
+        return renderer.render_gif(trace, out_path, fps=max(1, int(fps)))
+    return renderer.render_static(trace, out_path)
+
+
 def _build_eval_trainer(cfg: Dict[str, Any], deterministic: bool) -> TrainerSyncOnPolicy:
     env_cfg = dict(cfg["env"])
     env = MultiUAV2DEnv(**env_cfg)
@@ -107,7 +124,13 @@ def _build_eval_trainer(cfg: Dict[str, Any], deterministic: bool) -> TrainerSync
         hidden_dim=int(cfg["model"]["low_hidden_dim"]),
         h_diag_min=float(cfg.get("low_level_qp", {}).get("h_diag_min", 1e-2)),
         h_diag_max=float(cfg.get("low_level_qp", {}).get("h_diag_max", 50.0)),
+        h_offdiag_abs_max=float(cfg.get("low_level_qp", {}).get("h_offdiag_abs_max", 5.0)),
         f_abs_max=float(cfg.get("low_level_qp", {}).get("f_abs_max", 20.0)),
+        f_residual_reference_enabled=bool(cfg.get("low_level_qp", {}).get("f_residual_reference_enabled", True)),
+        f_ref_speed=float(cfg.get("low_level_qp", {}).get("f_ref_speed", cfg["skills"]["params"].get("ref_speed", 1.2))),
+        f_ref_kp=float(cfg.get("low_level_qp", {}).get("f_ref_kp", 1.2)),
+        f_ref_slow_radius=float(cfg.get("low_level_qp", {}).get("f_ref_slow_radius", cfg["skills"]["params"].get("slow_radius", 1.5))),
+        f_ref_goal_stop_min_speed=float(cfg.get("low_level_qp", {}).get("f_ref_goal_stop_min_speed", cfg["skills"]["params"].get("goal_stop_min_speed", 0.0))),
         phi_log_std_min=float(cfg.get("low_level_qp", {}).get("phi_log_std_min", -5.0)),
         phi_log_std_max=float(cfg.get("low_level_qp", {}).get("phi_log_std_max", 1.0)),
         w_clf=float(cfg.get("low_level_qp", {}).get("w_clf", 10.0)),
@@ -206,6 +229,7 @@ def _evaluate_once(
     scene_seed: int,
     max_steps: int,
     deterministic: bool,
+    capture_trace: bool = False,
 ) -> Dict[str, Any]:
     obs, _ = trainer.env.reset(seed=int(scene_seed))
     agent_ids = sorted(obs.keys())
@@ -218,6 +242,11 @@ def _evaluate_once(
     sampled = _sample_high_skills(trainer, obs, agent_ids, deterministic=deterministic)
     states0 = {s.agent_id: s for s in trainer.env.get_agent_states()}
     active = _activate_round_skills(trainer, sampled, states0)
+
+    trace_positions: List[np.ndarray] = []
+    trace_unsafe: List[np.ndarray] = []
+    obstacles = trainer.env.get_obstacles()
+    goals = np.stack([np.asarray(s.goal, dtype=np.float32).reshape(2) for s in trainer.env.get_agent_states()], axis=0)
 
     steps = 0
     terminated = False
@@ -250,6 +279,14 @@ def _evaluate_once(
             reached_any[aid] = bool(reached_any[aid] or bool(info.get("reach_flags", {}).get(aid, False)))
             unsafe_any[aid] = bool(unsafe_any[aid] or bool(info.get("unsafe_flags", {}).get(aid, False)))
 
+        if capture_trace:
+            trace_positions.append(
+                np.stack([next_states[aid].position for aid in agent_ids], axis=0).astype(np.float32)
+            )
+            trace_unsafe.append(
+                np.asarray([bool(info.get("unsafe_flags", {}).get(aid, False)) for aid in agent_ids], dtype=bool)
+            )
+
         obs = next_obs
         if (len(switched_agents) > 0) and not (terminated or truncated):
             sampled = _sample_high_skills(trainer, obs, agent_ids, deterministic=deterministic)
@@ -277,6 +314,10 @@ def _evaluate_once(
         "terminated": int(bool(terminated)),
         "truncated": int(bool(truncated)),
         "active_skill_ids": json.dumps({int(k): int(v) for k, v in active.items()}, ensure_ascii=False),
+        "trace_positions": trace_positions,
+        "trace_unsafe": trace_unsafe,
+        "goals": goals,
+        "obstacles": obstacles,
     }
 
 
@@ -306,7 +347,14 @@ def main() -> None:
     cfg["env"]["horizon"] = horizon_steps
 
     out_dir = _make_output_dir(Path(args.output_root), args.run_name)
+    render_requested = bool(args.render_gif) or bool(args.render_png)
+    render_gif = bool(args.render_gif) or not bool(args.render_png)
+    render_limit = max(0, int(args.render_episodes))
+    media_dir = out_dir / "media"
+    if render_requested and render_limit > 0:
+        media_dir.mkdir(parents=True, exist_ok=True)
     trainer = _build_eval_trainer(cfg=cfg, deterministic=bool(args.deterministic))
+    renderer = TrajectoryRenderer(world_size=float(cfg["env"]["world_size"]))
 
     _load_state_dict_flexible(trainer.high_policy, payload["high_policy"], "high_policy")
     _load_state_dict_flexible(trainer.low_policy, payload["low_policy"], "low_policy")
@@ -323,8 +371,30 @@ def main() -> None:
             scene_seed=int(args.seed) + ep,
             max_steps=horizon_steps,
             deterministic=bool(args.deterministic),
+            capture_trace=bool(render_requested and ep < render_limit),
         )
+        media_path = ""
+        if render_requested and ep < render_limit and row["trace_positions"]:
+            trace = EpisodeTrace(
+                positions=np.stack(row["trace_positions"], axis=0),
+                goals=np.asarray(row["goals"], dtype=np.float32),
+                obstacles=list(row["obstacles"]),
+                unsafe_flags=np.stack(row["trace_unsafe"], axis=0),
+            )
+            suffix = "gif" if render_gif else "png"
+            media_path = _render_episode(
+                renderer=renderer,
+                trace=trace,
+                out_path=media_dir / f"episode_{ep:03d}.{suffix}",
+                render_gif=render_gif,
+                fps=int(args.fps),
+            )
         row["episode"] = int(ep)
+        row["media_path"] = media_path
+        row.pop("trace_positions", None)
+        row.pop("trace_unsafe", None)
+        row.pop("goals", None)
+        row.pop("obstacles", None)
         rows.append(row)
 
         total_safe_reach += int(row["safe_reach_count"])
@@ -347,6 +417,9 @@ def main() -> None:
         "horizon_steps": int(horizon_steps),
         "seed_base": int(args.seed),
         "deterministic": bool(args.deterministic),
+        "render_requested": bool(render_requested and render_limit > 0),
+        "render_format": "gif" if render_requested and render_gif else ("png" if render_requested else ""),
+        "render_episodes": int(render_limit),
         "total_safe_reach": int(total_safe_reach),
         "total_agents": int(total_agents),
         "overall_safe_reach_ratio": overall_safe_reach_ratio,

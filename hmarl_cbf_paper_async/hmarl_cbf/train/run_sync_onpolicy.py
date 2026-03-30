@@ -295,6 +295,11 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         clf_k=float(cfg.get("low_level_qp", {}).get("clf_k", 1.0)),
         hocbf_gamma_h=float(cfg.get("low_level_qp", {}).get("hocbf_gamma_h", 1.0)),
         hocbf_gamma_hdot=float(cfg.get("low_level_qp", {}).get("hocbf_gamma_hdot", 1.0)),
+        f_residual_reference_enabled=bool(cfg.get("low_level_qp", {}).get("f_residual_reference_enabled", True)),
+        f_ref_speed=float(cfg.get("low_level_qp", {}).get("f_ref_speed", cfg["skills"]["params"].get("ref_speed", 1.2))),
+        f_ref_kp=float(cfg.get("low_level_qp", {}).get("f_ref_kp", 1.2)),
+        f_ref_slow_radius=float(cfg.get("low_level_qp", {}).get("f_ref_slow_radius", cfg["skills"]["params"].get("slow_radius", 1.5))),
+        f_ref_goal_stop_min_speed=float(cfg.get("low_level_qp", {}).get("f_ref_goal_stop_min_speed", cfg["skills"]["params"].get("goal_stop_min_speed", 0.0))),
     )
 
     high_opt = torch.optim.Adam(high_policy.parameters(), lr=3e-4)

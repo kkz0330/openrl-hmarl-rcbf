@@ -1,0 +1,14 @@
+{
+  "checkpoint": "artifacts/hmarl_cbf_paper_async/phi_ppo_async_residualF_noBoundary/checkpoints/last.pt",
+  "episodes": 50,
+  "seconds_per_episode": 30.0,
+  "horizon_steps": 300,
+  "seed_base": 12345,
+  "deterministic": true,
+  "total_safe_reach": 193,
+  "total_agents": 200,
+  "overall_safe_reach_ratio": 0.965,
+  "success_rounds": 48,
+  "success_round_rate": 0.96,
+  "output_dir": "artifacts/hmarl_cbf_eval/eval_phi_residualF_noBoundary"
+}
