@@ -1,0 +1,17 @@
+{
+  "checkpoint": "artifacts/hmarl_cbf_paper_async/phi_ppo_async_residualF_noBoundary/checkpoints/last.pt",
+  "episodes": 20,
+  "seconds_per_episode": 40.0,
+  "horizon_steps": 400,
+  "seed_base": 12345,
+  "deterministic": true,
+  "render_requested": true,
+  "render_format": "gif",
+  "render_episodes": 3,
+  "total_safe_reach": 151,
+  "total_agents": 160,
+  "overall_safe_reach_ratio": 0.94375,
+  "success_rounds": 18,
+  "success_round_rate": 0.9,
+  "output_dir": "artifacts/hmarl_cbf_eval/eval_8uav_zero_shot_from_phi_residualF_noBoundary_vis"
+}
