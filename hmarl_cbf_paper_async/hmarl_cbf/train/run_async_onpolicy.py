@@ -21,6 +21,7 @@ from hmarl_cbf.train.run_sync_onpolicy import (
     _restore_full_training_env,
     _seed_all,
     _set_high_entropy_coef,
+    _set_low_update_mode_schedule,
     _set_training_curriculum_stage,
     _set_low_entropy_coef,
     _write_history_csv,
@@ -92,6 +93,7 @@ def main() -> None:
         curriculum_stage = _set_training_curriculum_stage(trainer, cfg, itr)
         high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
         low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, total_iterations)
+        low_update_mode_stage = _set_low_update_mode_schedule(trainer, cfg["train"], itr)
         rollout = trainer.collect_rollout()
         _restore_full_training_env(trainer)
         low = trainer.update_low_level()
@@ -108,6 +110,9 @@ def main() -> None:
             "conv_eval_success_delta_w5": float("nan"),
             "high_entropy_coef": float(high_entropy_coef),
             "low_entropy_coef": float(low_entropy_coef),
+            "low_reference_pretrain_stage": float(
+                1.0 if str(low_update_mode_stage).strip().lower() in {"reference_regression", "reference_pretrain"} else 0.0
+            ),
             "high_samples": float(rollout.get("high_samples", 0.0)),
             "low_samples": float(rollout.get("low_samples", 0.0)),
             "loss_high_total": float(high.get("loss_total", 0.0)),
@@ -115,6 +120,10 @@ def main() -> None:
             "loss_low_actor": float(low.get("loss_actor", 0.0)),
             "loss_low_value": float(low.get("loss_value", 0.0)),
             "low_entropy": float(low.get("entropy", 0.0)),
+            "low_f_mean_x": float(low.get("low_f_mean_x", 0.0)),
+            "low_f_mean_y": float(low.get("low_f_mean_y", 0.0)),
+            "low_h_eig_min": float(low.get("low_h_eig_min", 0.0)),
+            "low_h_eig_max": float(low.get("low_h_eig_max", 0.0)),
         }
         should_eval = bool(itr == 1 or itr % eval_interval == 0 or itr == total_iterations)
         should_video = bool(video_interval > 0 and (itr % video_interval == 0))
@@ -148,7 +157,11 @@ def main() -> None:
                 f"skillH={row['skill_entropy_norm']:.4f} "
                 f"low_actor={row['loss_low_actor']:.4f} "
                 f"low_entropy={row['low_entropy']:.4f} "
-                f"loss_slack={float(low.get('loss_slack', 0.0)):.4f}"
+                f"loss_slack={float(low.get('loss_slack', 0.0)):.4f} "
+                f"Fx={row['low_f_mean_x']:.3f} "
+                f"Fy={row['low_f_mean_y']:.3f} "
+                f"Hmin={row['low_h_eig_min']:.3f} "
+                f"Hmax={row['low_h_eig_max']:.3f}"
             )
         history.append(row)
 

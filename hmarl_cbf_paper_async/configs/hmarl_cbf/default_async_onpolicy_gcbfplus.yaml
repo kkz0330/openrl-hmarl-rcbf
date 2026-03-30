@@ -14,7 +14,7 @@ env:
   lidar_beams: 32
   lidar_range: 3.0
   lidar_noise_std: 0.0
-  neighbor_radius: 2.0
+  neighbor_radius: 3.0
   max_neighbors: 4
   min_start_goal_separation: 1.0
   min_agent_separation: 0.8
@@ -44,7 +44,7 @@ skills:
     goal_threshold: 0.3
     goal_speed_threshold: 0.1
     action_limit: 2.0
-    turn_min_speed: 0.2
+    turn_min_speed: 0.05
     turn_target_angle: 0.6
     turn_heading_tol: 0.1
     turn_keep_speed: false
@@ -85,10 +85,11 @@ model:
 
 low_level_qp:
   h_diag_min: 0.01
-  h_diag_max: 50.0
-  f_abs_max: 20.0
+  h_diag_max: 20.0
+  h_offdiag_abs_max: 2.0
+  f_abs_max: 8.0
   phi_log_std_min: -5.0
-  phi_log_std_max: -1.0
+  phi_log_std_max: -1.5
   w_clf: 10.0
   w_cbf: 100.0
   cbf_slack_max: 1.0
@@ -128,6 +129,12 @@ train:
   low_ext_reward_coef: 0.0
   low_reward_mix_eta: 0.35
   low_reward_mix_divide_by_n_agents: true
+  high_option_progress_coef: 0.5
+  high_option_boundary_recovery_coef: 0.8
+  high_option_boundary_threshold: 1.0
+  low_reference_pretrain_iters: 150
+  low_update_mode_pretrain: reference_regression
+  low_update_mode_main: onpolicy_ppo
   low_update_mode: onpolicy_ppo
   low_update_epochs: 1
   low_max_samples_per_iter: 256
@@ -154,7 +161,7 @@ buffer_postprocess:
   low_reward_mix_divide_by_n_agents: true
 
 curriculum:
-  enabled: true
+  enabled: false
   single_agent_no_obstacle_iters: 200
   single_agent_no_obstacle_prob_start: 0.85
   single_agent_no_obstacle_prob_end: 0.15

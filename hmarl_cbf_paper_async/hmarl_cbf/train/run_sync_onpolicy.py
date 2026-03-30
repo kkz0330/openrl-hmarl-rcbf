@@ -21,6 +21,7 @@ except ImportError as exc:  # pragma: no cover - runtime entrypoint
     raise RuntimeError("PyYAML is required to load training config") from exc
 
 from hmarl_cbf.buffer import HierRolloutBuffer
+from hmarl_cbf.baselines import DistributedCBFBaselineConfig, DistributedCBFBaselineController
 from hmarl_cbf.control import (
     ConstraintBuilder,
     DifferentiableQPSolver,
@@ -130,6 +131,17 @@ def _set_low_entropy_coef(trainer: TrainerSyncOnPolicy, train_cfg: Dict[str, Any
         coef = start + (end - start) * alpha
     trainer.hooks.low_ppo_entropy_coef = float(coef)
     return float(coef)
+
+
+def _set_low_update_mode_schedule(trainer: TrainerSyncOnPolicy, train_cfg: Dict[str, Any], itr: int) -> str:
+    main_mode = str(train_cfg.get("low_update_mode_main", train_cfg.get("low_update_mode", "onpolicy_ppo"))).strip()
+    pretrain_mode = str(train_cfg.get("low_update_mode_pretrain", "reference_regression")).strip()
+    pretrain_iters = max(0, int(train_cfg.get("low_reference_pretrain_iters", 0)))
+    if pretrain_iters > 0 and itr <= pretrain_iters:
+        trainer.hooks.low_update_mode = pretrain_mode
+    else:
+        trainer.hooks.low_update_mode = main_mode
+    return str(trainer.hooks.low_update_mode)
 
 
 def _set_training_curriculum_stage(trainer: TrainerSyncOnPolicy, cfg: Dict[str, Any], itr: int) -> str:
@@ -271,6 +283,7 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         hidden_dim=int(cfg["model"]["low_hidden_dim"]),
         h_diag_min=float(cfg.get("low_level_qp", {}).get("h_diag_min", 1e-2)),
         h_diag_max=float(cfg.get("low_level_qp", {}).get("h_diag_max", 50.0)),
+        h_offdiag_abs_max=float(cfg.get("low_level_qp", {}).get("h_offdiag_abs_max", 5.0)),
         f_abs_max=float(cfg.get("low_level_qp", {}).get("f_abs_max", 20.0)),
         phi_log_std_min=float(cfg.get("low_level_qp", {}).get("phi_log_std_min", -5.0)),
         phi_log_std_max=float(cfg.get("low_level_qp", {}).get("phi_log_std_max", 1.0)),
@@ -306,6 +319,38 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         scs_max_iters=int(cfg["qp"].get("scs_max_iters", 10_000)),
         scs_eps=float(cfg["qp"].get("scs_eps", 1e-4)),
     )
+    teacher_baseline_cfg = DistributedCBFBaselineConfig.from_mapping(
+        {
+            "cbf_mode": cfg["skills"]["params"].get("cbf_mode", "distributed_gcbfplus"),
+            "cbf_share_agent": cfg["skills"]["params"].get("cbf_share_agent", 0.5),
+            "cbf_share_obs": cfg["skills"]["params"].get("cbf_share_obs", 1.0),
+            "cbf_u_max": action_limit,
+            "cbf_k0": cfg.get("low_level_qp", {}).get("cbf_k0", 1.0),
+            "cbf_k1": cfg.get("low_level_qp", {}).get("cbf_k1", 1.0),
+            "hocbf_gamma_h": cfg.get("low_level_qp", {}).get("hocbf_gamma_h", 1.0),
+            "hocbf_gamma_hdot": cfg.get("low_level_qp", {}).get("hocbf_gamma_hdot", 1.0),
+            "clf_k": cfg.get("low_level_qp", {}).get("clf_k", 1.0),
+            "H_diag": [1.0, 1.0],
+            "w_clf": cfg.get("low_level_qp", {}).get("w_clf", 10.0),
+            "w_cbf": cfg.get("low_level_qp", {}).get("w_cbf", 100.0),
+            "cbf_slack_max": cfg.get("low_level_qp", {}).get("cbf_slack_max", 1.0),
+            "ref_speed": cfg["skills"]["params"].get("ref_speed", 1.2),
+            "speed_kp": cfg.get("teacher_baseline", {}).get("speed_kp", 1.2),
+            "slow_radius": cfg["skills"]["params"].get("slow_radius", 1.5),
+            "goal_stop_min_speed": cfg["skills"]["params"].get("goal_stop_min_speed", 0.0),
+            "neighbor_radius": cfg["env"].get("neighbor_radius", 2.0),
+            "obstacle_range": cfg["env"].get("lidar_range", 3.0),
+            "boundary_cbf": cfg.get("safety", {}).get("boundary_cbf", True),
+            "boundary_margin": cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.2)),
+            "world_size": cfg["env"].get("world_size", 10.0),
+            "use_input_bounds": True,
+        }
+    )
+    teacher_baseline_controller = DistributedCBFBaselineController(
+        constraint_builder=constraint_builder,
+        qp_solver=qp_solver,
+        config=teacher_baseline_cfg,
+    )
     skill_params = dict(cfg["skills"]["params"])
     skill_params["action_limit"] = action_limit
     skill_params["cbf_u_max"] = action_limit
@@ -335,6 +380,9 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         low_ext_reward_coef=float(cfg["train"]["low_ext_reward_coef"]),
         low_reward_mix_eta=float(cfg["train"].get("low_reward_mix_eta", 0.0)),
         low_reward_mix_divide_by_n_agents=bool(cfg["train"].get("low_reward_mix_divide_by_n_agents", True)),
+        high_option_progress_coef=float(cfg["train"].get("high_option_progress_coef", 0.0)),
+        high_option_boundary_recovery_coef=float(cfg["train"].get("high_option_boundary_recovery_coef", 0.0)),
+        high_option_boundary_threshold=float(cfg["train"].get("high_option_boundary_threshold", 0.0)),
         low_update_epochs=int(cfg["train"]["low_update_epochs"]),
         low_max_samples_per_iter=int(cfg["train"]["low_max_samples_per_iter"]),
         low_target_step_scale=float(cfg["train"]["low_target_step_scale"]),
@@ -375,6 +423,7 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         ),
         high_level_updater=mappo,
         low_level_optimizer=low_opt,
+        teacher_baseline_controller=teacher_baseline_controller,
         hooks=hooks,
     )
     return trainer, high_opt, low_opt
@@ -441,6 +490,7 @@ def main() -> None:
         curriculum_stage = _set_training_curriculum_stage(trainer, cfg, itr)
         high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
         low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, total_iterations)
+        low_update_mode_stage = _set_low_update_mode_schedule(trainer, cfg["train"], itr)
         rollout = trainer.collect_rollout()
         _restore_full_training_env(trainer)
         low = trainer.update_low_level()
@@ -457,6 +507,9 @@ def main() -> None:
             "conv_eval_success_delta_w5": float("nan"),
             "high_entropy_coef": float(high_entropy_coef),
             "low_entropy_coef": float(low_entropy_coef),
+            "low_reference_pretrain_stage": float(
+                1.0 if str(low_update_mode_stage).strip().lower() in {"reference_regression", "reference_pretrain"} else 0.0
+            ),
             "high_samples": float(rollout.get("high_samples", 0.0)),
             "low_samples": float(rollout.get("low_samples", 0.0)),
             "loss_high_total": float(high.get("loss_total", 0.0)),
@@ -464,6 +517,10 @@ def main() -> None:
             "loss_low_actor": float(low.get("loss_actor", 0.0)),
             "loss_low_value": float(low.get("loss_value", 0.0)),
             "low_entropy": float(low.get("entropy", 0.0)),
+            "low_f_mean_x": float(low.get("low_f_mean_x", 0.0)),
+            "low_f_mean_y": float(low.get("low_f_mean_y", 0.0)),
+            "low_h_eig_min": float(low.get("low_h_eig_min", 0.0)),
+            "low_h_eig_max": float(low.get("low_h_eig_max", 0.0)),
         }
         should_eval = bool(itr == 1 or itr % eval_interval == 0 or itr == total_iterations)
         should_video = bool(video_interval > 0 and (itr % video_interval == 0))
@@ -496,7 +553,11 @@ def main() -> None:
                 f"skillH={row['skill_entropy_norm']:.4f} "
                 f"low_actor={row['loss_low_actor']:.4f} "
                 f"low_entropy={row['low_entropy']:.4f} "
-                f"loss_slack={float(low.get('loss_slack', 0.0)):.4f}"
+                f"loss_slack={float(low.get('loss_slack', 0.0)):.4f} "
+                f"Fx={row['low_f_mean_x']:.3f} "
+                f"Fy={row['low_f_mean_y']:.3f} "
+                f"Hmin={row['low_h_eig_min']:.3f} "
+                f"Hmax={row['low_h_eig_max']:.3f}"
             )
             if should_video:
                 print(f"[iter {itr}/{total_iterations}] periodic_media_dir={run_dir / 'eval_media' / f'iter_{itr:04d}'}")

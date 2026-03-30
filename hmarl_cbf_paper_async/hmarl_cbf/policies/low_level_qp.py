@@ -25,6 +25,7 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         hidden_dim: int = 128,
         h_diag_min: float = 1e-2,
         h_diag_max: float = 50.0,
+        h_offdiag_abs_max: float = 5.0,
         f_abs_max: float = 20.0,
         phi_log_std_min: float = -5.0,
         phi_log_std_max: float = 1.0,
@@ -45,6 +46,7 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         self.action_dim = action_dim
         self.h_diag_min = float(h_diag_min)
         self.h_diag_max = float(h_diag_max)
+        self.h_offdiag_abs_max = float(h_offdiag_abs_max)
         self.f_abs_max = float(f_abs_max)
         self.phi_log_std_min = float(phi_log_std_min)
         self.phi_log_std_max = float(phi_log_std_max)
@@ -52,6 +54,8 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
             raise ValueError("h_diag_min must be > 0 for strict positive definiteness")
         if self.h_diag_max < self.h_diag_min:
             raise ValueError("h_diag_max must be >= h_diag_min")
+        if self.h_offdiag_abs_max < 0.0:
+            raise ValueError("h_offdiag_abs_max must be >= 0")
         if self.f_abs_max <= 0.0:
             raise ValueError("f_abs_max must be > 0")
 
@@ -100,7 +104,10 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
                     )
                     L[:, row, col] = diag
                 else:
-                    L[:, row, col] = raw
+                    if self.h_offdiag_abs_max > 0.0:
+                        L[:, row, col] = self.h_offdiag_abs_max * torch.tanh(raw)
+                    else:
+                        L[:, row, col] = torch.zeros_like(raw)
                 cursor += 1
         H = torch.matmul(L, L.transpose(-1, -2))
         jitter = self.h_diag_min * torch.eye(self.action_dim, dtype=H.dtype, device=H.device).unsqueeze(0)

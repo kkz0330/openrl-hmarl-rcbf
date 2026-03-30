@@ -19,6 +19,7 @@ from hmarl_cbf.control import (
     TorchDifferentiableQPSolver,
     build_diff_constraint_constants,
 )
+from hmarl_cbf.baselines import DistributedCBFBaselineController
 from hmarl_cbf.eval import EpisodeTrace, EvalEpisodeStats, TrajectoryRenderer, evaluate_summary
 from hmarl_cbf.high_level import OnPolicyMAPPO
 from hmarl_cbf.skills import SkillRuntimeManager
@@ -35,6 +36,9 @@ class TrainerHooks:
     low_ext_reward_coef: float = 0.0
     low_reward_mix_eta: float = 0.0
     low_reward_mix_divide_by_n_agents: bool = True
+    high_option_progress_coef: float = 0.0
+    high_option_boundary_recovery_coef: float = 0.0
+    high_option_boundary_threshold: float = 0.0
     low_update_epochs: int = 1
     low_max_samples_per_iter: int = 256
     low_target_step_scale: float = 0.05
@@ -74,6 +78,7 @@ class TrainerSyncOnPolicy:
         diff_qp_solver: TorchDifferentiableQPSolver | None = None,
         high_level_updater: OnPolicyMAPPO | None = None,
         low_level_optimizer: Any | None = None,
+        teacher_baseline_controller: DistributedCBFBaselineController | None = None,
         hooks: TrainerHooks | None = None,
     ) -> None:
         self.env = env
@@ -88,6 +93,7 @@ class TrainerSyncOnPolicy:
         self.diff_qp_solver = diff_qp_solver
         self.high_level_updater = high_level_updater
         self.low_level_optimizer = low_level_optimizer
+        self.teacher_baseline_controller = teacher_baseline_controller
         self.hooks = hooks or TrainerHooks()
 
     def set_skill_runtime(self, skill_runtime: SkillRuntimeManager) -> None:
@@ -105,6 +111,9 @@ class TrainerSyncOnPolicy:
     def set_low_level_optimizer(self, low_level_optimizer: Any) -> None:
         self.low_level_optimizer = low_level_optimizer
 
+    def set_teacher_baseline_controller(self, teacher_baseline_controller: DistributedCBFBaselineController | None) -> None:
+        self.teacher_baseline_controller = teacher_baseline_controller
+
     @staticmethod
     def _normalized_entropy_from_counts(skill_counts: Dict[int, int]) -> float:
         total = int(sum(int(v) for v in skill_counts.values()))
@@ -115,6 +124,11 @@ class TrainerSyncOnPolicy:
         probs = np.clip(probs, 1e-12, 1.0)
         entropy = float(-np.sum(probs * np.log(probs)))
         return float(entropy / np.log(float(n)))
+
+    @staticmethod
+    def _boundary_clearance(state: AgentState, world_size: float) -> float:
+        pos = np.asarray(state.position, dtype=np.float32).reshape(2)
+        return float(world_size - max(abs(float(pos[0])), abs(float(pos[1]))))
 
     def activate_round_skills(
         self,
@@ -246,6 +260,14 @@ class TrainerSyncOnPolicy:
             "deterministic_diff",
             "deterministic_hf",
             "target_regression",
+            "reference_regression",
+            "reference_pretrain",
+        }
+
+    def _is_low_update_reference_regression(self) -> bool:
+        return str(self.hooks.low_update_mode).strip().lower() in {
+            "reference_regression",
+            "reference_pretrain",
         }
 
     def _extract_local_context_from_info(
@@ -584,6 +606,15 @@ class TrainerSyncOnPolicy:
         ep_return_ext = {aid: 0.0 for aid in agent_ids}
         round_return_ext = {aid: 0.0 for aid in agent_ids}
         round_discount = {aid: 1.0 for aid in agent_ids}
+        world_size = float(getattr(self.env, "world_size", 0.0))
+        option_start_goal_dist = {
+            aid: float(np.linalg.norm(state.goal - state.position))
+            for aid, state in {s.agent_id: s for s in self.env.get_agent_states()}.items()
+        }
+        option_start_boundary_clearance = {
+            aid: self._boundary_clearance(state, world_size)
+            for aid, state in {s.agent_id: s for s in self.env.get_agent_states()}.items()
+        }
         done_by_agent = {aid: False for aid in agent_ids}
         reached_any = {aid: False for aid in agent_ids}
         unsafe_any = {aid: False for aid in agent_ids}
@@ -631,7 +662,11 @@ class TrainerSyncOnPolicy:
                 skill_id=int(actual[aid]),
                 logp=float(sampled[aid]["logp"]),
                 value=float(sampled[aid]["value"]),
-                info={"round_start": True},
+                info={
+                    "round_start": True,
+                    "goal_dist_start": float(option_start_goal_dist[aid]),
+                    "boundary_clearance_start": float(option_start_boundary_clearance[aid]),
+                },
             )
 
         steps_collected = 0
@@ -666,6 +701,18 @@ class TrainerSyncOnPolicy:
                 else:
                     raise ValueError("unsupported paper subset low-level update mode")
                 actions.update(active_actions)
+                teacher_actions: Dict[int, np.ndarray] = {}
+                if self._is_low_update_reference_regression() and self.teacher_baseline_controller is not None:
+                    teacher_actions, _ = self.teacher_baseline_controller.solve_batch(
+                        states=active_states,
+                        obstacles=self.env.get_obstacles(),
+                    )
+                for aid, teacher_action in teacher_actions.items():
+                    low_step_stats.setdefault(aid, {})
+                    low_step_stats[aid]["teacher_action"] = np.asarray(
+                        teacher_action,
+                        dtype=np.float32,
+                    ).reshape(2).copy()
             next_obs, rewards, terminated, truncated, info = self.env.step(actions)
             next_states = {s.agent_id: s for s in self.env.get_agent_states()}
             next_obs_low = {aid: next_obs[aid]["low"] for aid in agent_ids}
@@ -690,6 +737,9 @@ class TrainerSyncOnPolicy:
                 done_by_agent[aid] = done
                 if aid not in active_agent_ids:
                     continue
+                low_stats = dict(low_step_stats.get(aid, {}))
+                low_logp = low_stats.get("low_logp", None)
+                low_value = low_stats.get("low_value", None)
                 self.record_low_step(
                     LowStepTransition(
                         t=step_sync.t,
@@ -701,8 +751,8 @@ class TrainerSyncOnPolicy:
                         reward_int=float(skill_out[aid].intrinsic_reward),
                         reward_ext=float(rewards[aid]),
                         done=done,
-                        logp=float(low_step_stats.get(aid, {}).get("low_logp")) if aid in low_step_stats else None,
-                        value=float(low_step_stats.get(aid, {}).get("low_value")) if aid in low_step_stats else None,
+                        logp=(float(low_logp) if low_logp is not None else None),
+                        value=(float(low_value) if low_value is not None else None),
                         sync_switch=bool(aid in switched_agents),
                         terminated_by_skill=bool(skill_out[aid].beta),
                         info={
@@ -727,6 +777,11 @@ class TrainerSyncOnPolicy:
                                 for o in control_outputs[aid].obstacles_used
                             ],
                             "skill_u_ref": np.asarray(skill_out[aid].u_ref_skill, dtype=np.float32).reshape(2).copy(),
+                            "teacher_action": (
+                                np.asarray(low_stats["teacher_action"], dtype=np.float32).reshape(2).copy()
+                                if "teacher_action" in low_stats
+                                else None
+                            ),
                             "low_qp_H": np.asarray(control_outputs[aid].qp_param.H_mat, dtype=np.float32).reshape(2, 2).copy(),
                             "low_qp_F": np.asarray(control_outputs[aid].qp_param.f_lin, dtype=np.float32).reshape(2).copy(),
                             "low_phi_sample": (
@@ -769,13 +824,37 @@ class TrainerSyncOnPolicy:
                 t_end = self.coordinator.t
                 for aid in close_agents:
                     if self.buffer.has_open_high_option(aid):
+                        goal_dist_end = float(np.linalg.norm(next_states[aid].goal - next_states[aid].position))
+                        goal_dist_start = float(option_start_goal_dist.get(aid, goal_dist_end))
+                        option_progress_bonus = float(self.hooks.high_option_progress_coef) * float(
+                            goal_dist_start - goal_dist_end
+                        )
+                        boundary_clearance_end = self._boundary_clearance(next_states[aid], world_size)
+                        boundary_clearance_start = float(
+                            option_start_boundary_clearance.get(aid, boundary_clearance_end)
+                        )
+                        boundary_recovery_bonus = 0.0
+                        threshold = float(self.hooks.high_option_boundary_threshold)
+                        if threshold > 0.0 and boundary_clearance_start <= threshold:
+                            boundary_recovery_bonus = float(self.hooks.high_option_boundary_recovery_coef) * float(
+                                boundary_clearance_end - boundary_clearance_start
+                            )
                         self.close_high_option(
                             agent_id=aid,
                             t_end=t_end,
-                            return_ext=round_return_ext[aid],
+                            return_ext=round_return_ext[aid] + option_progress_bonus + boundary_recovery_bonus,
                             done=done_by_agent[aid],
                             sync_switch=bool(aid in switched_agents),
-                            info={"forced_sync": forced_end, "frozen_reached": bool(aid in newly_frozen)},
+                            info={
+                                "forced_sync": forced_end,
+                                "frozen_reached": bool(aid in newly_frozen),
+                                "goal_dist_start": goal_dist_start,
+                                "goal_dist_end": goal_dist_end,
+                                "option_progress_bonus": option_progress_bonus,
+                                "boundary_clearance_start": boundary_clearance_start,
+                                "boundary_clearance_end": boundary_clearance_end,
+                                "boundary_recovery_bonus": boundary_recovery_bonus,
+                            },
                         )
                         round_return_ext[aid] = 0.0
                         round_discount[aid] = 1.0
@@ -807,17 +886,45 @@ class TrainerSyncOnPolicy:
                         skill_id=int(actual[aid]),
                         logp=float(sampled[aid]["logp"]),
                         value=float(sampled[aid]["value"]),
+                        info={
+                            "goal_dist_start": float(np.linalg.norm(states_round[aid].goal - states_round[aid].position)),
+                            "boundary_clearance_start": float(self._boundary_clearance(states_round[aid], world_size)),
+                        },
                     )
+                    option_start_goal_dist[aid] = float(np.linalg.norm(states_round[aid].goal - states_round[aid].position))
+                    option_start_boundary_clearance[aid] = float(self._boundary_clearance(states_round[aid], world_size))
 
         for aid in agent_ids:
             if self.buffer.has_open_high_option(aid):
+                final_states = {s.agent_id: s for s in self.env.get_agent_states()}
+                goal_dist_end = float(np.linalg.norm(final_states[aid].goal - final_states[aid].position))
+                goal_dist_start = float(option_start_goal_dist.get(aid, goal_dist_end))
+                option_progress_bonus = float(self.hooks.high_option_progress_coef) * float(
+                    goal_dist_start - goal_dist_end
+                )
+                boundary_clearance_end = self._boundary_clearance(final_states[aid], world_size)
+                boundary_clearance_start = float(option_start_boundary_clearance.get(aid, boundary_clearance_end))
+                boundary_recovery_bonus = 0.0
+                threshold = float(self.hooks.high_option_boundary_threshold)
+                if threshold > 0.0 and boundary_clearance_start <= threshold:
+                    boundary_recovery_bonus = float(self.hooks.high_option_boundary_recovery_coef) * float(
+                        boundary_clearance_end - boundary_clearance_start
+                    )
                 self.close_high_option(
                     agent_id=aid,
                     t_end=self.coordinator.t,
-                    return_ext=round_return_ext[aid],
+                    return_ext=round_return_ext[aid] + option_progress_bonus + boundary_recovery_bonus,
                     done=done_by_agent[aid],
                     sync_switch=True,
-                    info={"cutoff_close": True},
+                    info={
+                        "cutoff_close": True,
+                        "goal_dist_start": goal_dist_start,
+                        "goal_dist_end": goal_dist_end,
+                        "option_progress_bonus": option_progress_bonus,
+                        "boundary_clearance_start": boundary_clearance_start,
+                        "boundary_clearance_end": boundary_clearance_end,
+                        "boundary_recovery_bonus": boundary_recovery_bonus,
+                    },
                 )
 
         bootstrap: Dict[int, float] = {}
@@ -870,9 +977,25 @@ class TrainerSyncOnPolicy:
 
     def _update_low_level_deterministic_diff(self) -> Dict[str, float]:
         if self.diff_qp_solver is None or self.low_level_optimizer is None:
-            return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
+            return {
+                "n_updates": 0.0,
+                "loss_mean": 0.0,
+                "loss_last": 0.0,
+                "low_f_mean_x": 0.0,
+                "low_f_mean_y": 0.0,
+                "low_h_eig_min": 0.0,
+                "low_h_eig_max": 0.0,
+            }
         if self.low_policy is None or not hasattr(self.low_policy, "forward"):
-            return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
+            return {
+                "n_updates": 0.0,
+                "loss_mean": 0.0,
+                "loss_last": 0.0,
+                "low_f_mean_x": 0.0,
+                "low_f_mean_y": 0.0,
+                "low_h_eig_min": 0.0,
+                "low_h_eig_max": 0.0,
+            }
 
         low_steps = self.buffer.snapshot()[0]
         if len(low_steps) == 0:
@@ -883,6 +1006,10 @@ class TrainerSyncOnPolicy:
         actor_losses: List[float] = []
         value_losses: List[float] = []
         slack_losses: List[float] = []
+        f_x_vals: List[float] = []
+        f_y_vals: List[float] = []
+        h_eig_min_vals: List[float] = []
+        h_eig_max_vals: List[float] = []
         n_updates = 0
         value_coef = float(self.hooks.low_deterministic_value_coef)
         slack_coef = float(self.hooks.low_deterministic_slack_coef)
@@ -891,15 +1018,21 @@ class TrainerSyncOnPolicy:
             for tr in selected:
                 state, neighbors, obstacles, safety_constraints = self._extract_local_context_from_info(tr)
 
-                adv = float(
-                    tr.advantage if tr.advantage is not None else tr.return_target if tr.return_target is not None else 0.0
-                )
-                goal_dir = np.asarray(tr.obs_low.goal_relative, dtype=np.float32)
-                norm = float(np.linalg.norm(goal_dir))
-                if norm > 1e-6:
-                    goal_dir = goal_dir / norm
-                delta = self.hooks.low_target_step_scale * adv * goal_dir
-                target_action = np.asarray(tr.action, dtype=np.float32) + delta
+                if self._is_low_update_reference_regression():
+                    target_action = np.asarray(
+                        tr.info.get("teacher_action", tr.info.get("skill_u_ref", tr.action)),
+                        dtype=np.float32,
+                    ).reshape(2)
+                else:
+                    adv = float(
+                        tr.advantage if tr.advantage is not None else tr.return_target if tr.return_target is not None else 0.0
+                    )
+                    goal_dir = np.asarray(tr.obs_low.goal_relative, dtype=np.float32)
+                    norm = float(np.linalg.norm(goal_dir))
+                    if norm > 1e-6:
+                        goal_dir = goal_dir / norm
+                    delta = self.hooks.low_target_step_scale * adv * goal_dir
+                    target_action = np.asarray(tr.action, dtype=np.float32) + delta
                 if bool(safety_constraints.get("use_input_bounds", True)):
                     target_u_min = np.asarray(
                         safety_constraints.get("u_min", self.constraint_builder.u_min), dtype=np.float32
@@ -917,6 +1050,8 @@ class TrainerSyncOnPolicy:
                 obs_tensor = torch.as_tensor(tr.obs_low.flat, dtype=torch.float32).unsqueeze(0)
                 skill_tensor = torch.as_tensor([int(tr.skill_id)], dtype=torch.long)
                 qp_param = self._flatten_qp_param_torch(self.low_policy(obs_tensor, skill_tensor))
+                f_vec = qp_param.f_lin.reshape(-1)
+                h_eigs = torch.linalg.eigvalsh(qp_param.H_mat.reshape(2, 2))
                 out = self.diff_qp_solver.solve(qp_param, constants)
                 action_pred = out.action.reshape(2)
                 target_t = torch.as_tensor(target_action, dtype=torch.float32, device=action_pred.device)
@@ -940,6 +1075,10 @@ class TrainerSyncOnPolicy:
                 actor_losses.append(float(actor_loss.detach().cpu().item()))
                 value_losses.append(float(value_loss.detach().cpu().item()))
                 slack_losses.append(float(slack_loss.detach().cpu().item()))
+                f_x_vals.append(float(f_vec[0].detach().cpu().item()))
+                f_y_vals.append(float(f_vec[1].detach().cpu().item()))
+                h_eig_min_vals.append(float(h_eigs[0].detach().cpu().item()))
+                h_eig_max_vals.append(float(h_eigs[-1].detach().cpu().item()))
                 n_updates += 1
 
         return {
@@ -949,19 +1088,39 @@ class TrainerSyncOnPolicy:
             "loss_actor": float(sum(actor_losses) / max(1, len(actor_losses))),
             "loss_value": float(sum(value_losses) / max(1, len(value_losses))),
             "loss_slack": float(sum(slack_losses) / max(1, len(slack_losses))),
+            "low_f_mean_x": float(sum(f_x_vals) / max(1, len(f_x_vals))),
+            "low_f_mean_y": float(sum(f_y_vals) / max(1, len(f_y_vals))),
+            "low_h_eig_min": float(sum(h_eig_min_vals) / max(1, len(h_eig_min_vals))),
+            "low_h_eig_max": float(sum(h_eig_max_vals) / max(1, len(h_eig_max_vals))),
         }
 
     def _update_low_level_onpolicy_ppo(self) -> Dict[str, float]:
         if torch is None:
             raise RuntimeError("PyTorch is required for on-policy low-level updates")
         if self.diff_qp_solver is None or self.low_level_optimizer is None:
-            return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
+            return {
+                "n_updates": 0.0,
+                "loss_mean": 0.0,
+                "loss_last": 0.0,
+                "low_f_mean_x": 0.0,
+                "low_f_mean_y": 0.0,
+                "low_h_eig_min": 0.0,
+                "low_h_eig_max": 0.0,
+            }
         if self.low_policy is None or not hasattr(self.low_policy, "evaluate_phi") or not hasattr(self.low_policy, "low_value"):
             raise RuntimeError("low_policy must provide evaluate_phi(...) and low_value(...) for stochastic phi PPO")
 
         low_steps = self.buffer.snapshot()[0]
         if len(low_steps) == 0:
-            return {"n_updates": 0.0, "loss_mean": 0.0, "loss_last": 0.0}
+            return {
+                "n_updates": 0.0,
+                "loss_mean": 0.0,
+                "loss_last": 0.0,
+                "low_f_mean_x": 0.0,
+                "low_f_mean_y": 0.0,
+                "low_h_eig_min": 0.0,
+                "low_h_eig_max": 0.0,
+            }
 
         selected = list(low_steps)[-self.hooks.low_max_samples_per_iter :]
         ppo_samples = [
@@ -998,6 +1157,10 @@ class TrainerSyncOnPolicy:
         loss_value_all: List[float] = []
         entropy_all: List[float] = []
         slack_all: List[float] = []
+        f_x_vals: List[float] = []
+        f_y_vals: List[float] = []
+        h_eig_min_vals: List[float] = []
+        h_eig_max_vals: List[float] = []
         n_updates = 0
 
         n_epochs = max(1, int(self.hooks.low_ppo_epochs))
@@ -1023,6 +1186,8 @@ class TrainerSyncOnPolicy:
                 new_logp = eval_out["logp"].reshape(1)[0]
                 entropy_bonus = eval_out["entropy"].reshape(1)[0]
                 qp_param = self._flatten_qp_param_torch(eval_out["qp_param"])
+                f_vec = qp_param.f_lin.reshape(-1)
+                h_eigs = torch.linalg.eigvalsh(qp_param.H_mat.reshape(2, 2))
                 qp_out = self.diff_qp_solver.solve(qp_param, constants)
 
                 old_logp = torch.as_tensor(float(tr.logp), dtype=torch.float32, device=new_logp.device)
@@ -1052,6 +1217,10 @@ class TrainerSyncOnPolicy:
                 loss_value_all.append(float(value_loss.detach().cpu().item()))
                 entropy_all.append(float(entropy_bonus.detach().cpu().item()))
                 slack_all.append(float(slack_loss.detach().cpu().item()))
+                f_x_vals.append(float(f_vec[0].detach().cpu().item()))
+                f_y_vals.append(float(f_vec[1].detach().cpu().item()))
+                h_eig_min_vals.append(float(h_eigs[0].detach().cpu().item()))
+                h_eig_max_vals.append(float(h_eigs[-1].detach().cpu().item()))
                 n_updates += 1
 
         return {
@@ -1062,6 +1231,10 @@ class TrainerSyncOnPolicy:
             "loss_value": float(sum(loss_value_all) / max(1, len(loss_value_all))),
             "entropy": float(sum(entropy_all) / max(1, len(entropy_all))),
             "loss_slack": float(sum(slack_all) / max(1, len(slack_all))),
+            "low_f_mean_x": float(sum(f_x_vals) / max(1, len(f_x_vals))),
+            "low_f_mean_y": float(sum(f_y_vals) / max(1, len(f_y_vals))),
+            "low_h_eig_min": float(sum(h_eig_min_vals) / max(1, len(h_eig_min_vals))),
+            "low_h_eig_max": float(sum(h_eig_max_vals) / max(1, len(h_eig_max_vals))),
         }
 
     def update_high_level(self) -> Dict[str, float]:
