@@ -36,9 +36,21 @@ class TrainerHooks:
     low_ext_reward_coef: float = 0.0
     low_reward_mix_eta: float = 0.0
     low_reward_mix_divide_by_n_agents: bool = True
+    low_safety_margin_coef: float = 0.0
+    low_safety_margin_h_agent: float = 0.0
+    low_safety_margin_h_obstacle: float = 0.0
     high_option_progress_coef: float = 0.0
     high_option_boundary_recovery_coef: float = 0.0
     high_option_boundary_threshold: float = 0.0
+    high_option_trap_relief_coef: float = 0.0
+    high_option_trap_enter_coef: float = 0.0
+    high_option_stuck_penalty_coef: float = 0.0
+    high_option_stuck_blocked_threshold: float = 0.5
+    high_option_stuck_progress_threshold: float = 0.1
+    high_option_stuck_speed_threshold: float = 0.2
+    high_trap_blocked_lookahead: float = 4.0
+    high_trap_blocked_lateral_window: float = 3.0
+    high_trap_blocked_extra_margin: float = 0.1
     low_update_epochs: int = 1
     low_max_samples_per_iter: int = 256
     low_target_step_scale: float = 0.05
@@ -95,6 +107,8 @@ class TrainerSyncOnPolicy:
         self.low_level_optimizer = low_level_optimizer
         self.teacher_baseline_controller = teacher_baseline_controller
         self.hooks = hooks or TrainerHooks()
+        self.training_scene_sampler: Any | None = None
+        self.last_rollout_scene_name: str = "random"
 
     def set_skill_runtime(self, skill_runtime: SkillRuntimeManager) -> None:
         self.skill_runtime = skill_runtime
@@ -114,6 +128,9 @@ class TrainerSyncOnPolicy:
     def set_teacher_baseline_controller(self, teacher_baseline_controller: DistributedCBFBaselineController | None) -> None:
         self.teacher_baseline_controller = teacher_baseline_controller
 
+    def set_training_scene_sampler(self, sampler: Any | None) -> None:
+        self.training_scene_sampler = sampler
+
     @staticmethod
     def _normalized_entropy_from_counts(skill_counts: Dict[int, int]) -> float:
         total = int(sum(int(v) for v in skill_counts.values()))
@@ -129,6 +146,65 @@ class TrainerSyncOnPolicy:
     def _boundary_clearance(state: AgentState, world_size: float) -> float:
         pos = np.asarray(state.position, dtype=np.float32).reshape(2)
         return float(world_size - max(abs(float(pos[0])), abs(float(pos[1]))))
+
+    def _compute_blocked_score(
+        self,
+        state: AgentState,
+        obstacles: List[Dict[str, Any]],
+        d_safe_obs: float | None = None,
+    ) -> float:
+        if len(obstacles) == 0:
+            return 0.0
+        pos = np.asarray(state.position, dtype=np.float32).reshape(2)
+        goal = np.asarray(state.goal, dtype=np.float32).reshape(2)
+        goal_vec = goal - pos
+        goal_dist = float(np.linalg.norm(goal_vec))
+        if goal_dist <= 1e-6:
+            return 0.0
+
+        e_goal = goal_vec / goal_dist
+        e_perp = np.asarray([-e_goal[1], e_goal[0]], dtype=np.float32)
+        lookahead = float(max(1e-3, self.hooks.high_trap_blocked_lookahead))
+        lateral_window = float(max(1e-3, self.hooks.high_trap_blocked_lateral_window))
+        extra_margin = float(max(0.0, self.hooks.high_trap_blocked_extra_margin))
+        safe_obs = float(self.constraint_builder.d_safe_obs if d_safe_obs is None else d_safe_obs)
+        required_width = 2.0 * float(state.radius + safe_obs + extra_margin)
+
+        intervals: List[tuple[float, float]] = []
+        for obs in obstacles:
+            center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
+            radius = float(obs["radius"])
+            rel = center - pos
+            longitudinal = float(np.dot(rel, e_goal))
+            if longitudinal <= 0.0 or longitudinal > lookahead:
+                continue
+            lateral = float(np.dot(rel, e_perp))
+            inflated = float(radius + state.radius + safe_obs + extra_margin)
+            left = max(-lateral_window, lateral - inflated)
+            right = min(lateral_window, lateral + inflated)
+            if right <= -lateral_window or left >= lateral_window:
+                continue
+            intervals.append((left, right))
+
+        if len(intervals) == 0:
+            return 0.0
+
+        intervals.sort(key=lambda item: item[0])
+        merged: List[List[float]] = []
+        for left, right in intervals:
+            if not merged or left > merged[-1][1]:
+                merged.append([left, right])
+            else:
+                merged[-1][1] = max(merged[-1][1], right)
+
+        max_gap = 0.0
+        cursor = -lateral_window
+        for left, right in merged:
+            max_gap = max(max_gap, left - cursor)
+            cursor = max(cursor, right)
+        max_gap = max(max_gap, lateral_window - cursor)
+
+        return float(np.clip((required_width - max_gap) / max(required_width, 1e-6), 0.0, 1.0))
 
     def activate_round_skills(
         self,
@@ -573,6 +649,9 @@ class TrainerSyncOnPolicy:
             high_adv_by_option=high_adv_by_option,
             divide_high_adv_by_n_agents=low_reward_mix_divide_by_n_agents,
             n_agents=int(getattr(self.env, "n_agents", 1)),
+            safety_margin_coef=float(self.hooks.low_safety_margin_coef),
+            safety_margin_h_agent=float(self.hooks.low_safety_margin_h_agent),
+            safety_margin_h_obstacle=float(self.hooks.low_safety_margin_h_obstacle),
         )
         return {
             "high_n": high_stats["n_samples"],
@@ -598,7 +677,14 @@ class TrainerSyncOnPolicy:
             raise RuntimeError("env is not set")
 
         self.buffer.clear()
-        obs, _ = self.env.reset()
+        reset_options: Dict[str, Any] | None = None
+        scene_name = "random"
+        if callable(self.training_scene_sampler):
+            sampled = self.training_scene_sampler(self.env)
+            if sampled is not None:
+                scene_name, reset_options = sampled
+        self.last_rollout_scene_name = str(scene_name)
+        obs, _ = self.env.reset(options=reset_options)
         agent_ids = sorted(obs.keys())
         self.skill_runtime.reset(agent_ids)
         self.coordinator.reset()
@@ -615,6 +701,12 @@ class TrainerSyncOnPolicy:
             aid: self._boundary_clearance(state, world_size)
             for aid, state in {s.agent_id: s for s in self.env.get_agent_states()}.items()
         }
+        option_start_blocked_score = {
+            aid: self._compute_blocked_score(state, self.env.get_obstacles())
+            for aid, state in {s.agent_id: s for s in self.env.get_agent_states()}.items()
+        }
+        option_speed_sum = {aid: 0.0 for aid in agent_ids}
+        option_speed_count = {aid: 0 for aid in agent_ids}
         done_by_agent = {aid: False for aid in agent_ids}
         reached_any = {aid: False for aid in agent_ids}
         unsafe_any = {aid: False for aid in agent_ids}
@@ -666,6 +758,7 @@ class TrainerSyncOnPolicy:
                     "round_start": True,
                     "goal_dist_start": float(option_start_goal_dist[aid]),
                     "boundary_clearance_start": float(option_start_boundary_clearance[aid]),
+                    "blocked_score_start": float(option_start_blocked_score[aid]),
                 },
             )
 
@@ -759,6 +852,16 @@ class TrainerSyncOnPolicy:
                             "qp_feasible": bool(control_outputs[aid].solution.feasible),
                             "qp_status": control_outputs[aid].solution.solver_status,
                             "safety_constraints": dict(control_outputs[aid].safety_constraints),
+                            "min_h_agent": float(
+                                info.get("safety_metrics", {}).get(aid).min_h_agent
+                                if info.get("safety_metrics", {}).get(aid) is not None
+                                else 0.0
+                            ),
+                            "min_h_obstacle": float(
+                                info.get("safety_metrics", {}).get(aid).min_h_obstacle
+                                if info.get("safety_metrics", {}).get(aid) is not None
+                                else 0.0
+                            ),
                             "perceived_neighbors": [
                                 {
                                     "agent_id": int(s.agent_id),
@@ -810,6 +913,8 @@ class TrainerSyncOnPolicy:
                 round_return_ext[aid] += round_discount[aid] * float(rewards[aid])
                 round_discount[aid] *= self.hooks.gamma_high
                 ep_return_ext[aid] += float(rewards[aid])
+                option_speed_sum[aid] += float(np.linalg.norm(next_states[aid].velocity))
+                option_speed_count[aid] += 1
 
             newly_frozen = {
                 aid for aid in active_agent_ids
@@ -833,16 +938,41 @@ class TrainerSyncOnPolicy:
                         boundary_clearance_start = float(
                             option_start_boundary_clearance.get(aid, boundary_clearance_end)
                         )
+                        blocked_score_end = self._compute_blocked_score(next_states[aid], self.env.get_obstacles())
+                        blocked_score_start = float(option_start_blocked_score.get(aid, blocked_score_end))
                         boundary_recovery_bonus = 0.0
                         threshold = float(self.hooks.high_option_boundary_threshold)
                         if threshold > 0.0 and boundary_clearance_start <= threshold:
                             boundary_recovery_bonus = float(self.hooks.high_option_boundary_recovery_coef) * float(
                                 boundary_clearance_end - boundary_clearance_start
                             )
+                        trap_relief_bonus = float(self.hooks.high_option_trap_relief_coef) * float(
+                            blocked_score_start - blocked_score_end
+                        )
+                        trap_enter_penalty = float(self.hooks.high_option_trap_enter_coef) * float(
+                            blocked_score_start * max(0.0, goal_dist_start - goal_dist_end)
+                        )
+                        option_progress = float(goal_dist_start - goal_dist_end)
+                        avg_speed = float(option_speed_sum.get(aid, 0.0) / max(1, option_speed_count.get(aid, 0)))
+                        stuck_penalty = 0.0
+                        if (
+                            float(self.hooks.high_option_stuck_penalty_coef) > 0.0
+                            and blocked_score_end >= float(self.hooks.high_option_stuck_blocked_threshold)
+                            and option_progress <= float(self.hooks.high_option_stuck_progress_threshold)
+                            and avg_speed <= float(self.hooks.high_option_stuck_speed_threshold)
+                        ):
+                            stuck_penalty = float(self.hooks.high_option_stuck_penalty_coef)
                         self.close_high_option(
                             agent_id=aid,
                             t_end=t_end,
-                            return_ext=round_return_ext[aid] + option_progress_bonus + boundary_recovery_bonus,
+                            return_ext=(
+                                round_return_ext[aid]
+                                + option_progress_bonus
+                                + boundary_recovery_bonus
+                                + trap_relief_bonus
+                                - trap_enter_penalty
+                                - stuck_penalty
+                            ),
                             done=done_by_agent[aid],
                             sync_switch=bool(aid in switched_agents),
                             info={
@@ -854,10 +984,18 @@ class TrainerSyncOnPolicy:
                                 "boundary_clearance_start": boundary_clearance_start,
                                 "boundary_clearance_end": boundary_clearance_end,
                                 "boundary_recovery_bonus": boundary_recovery_bonus,
+                                "blocked_score_start": blocked_score_start,
+                                "blocked_score_end": blocked_score_end,
+                                "trap_relief_bonus": trap_relief_bonus,
+                                "trap_enter_penalty": trap_enter_penalty,
+                                "option_avg_speed": avg_speed,
+                                "stuck_penalty": stuck_penalty,
                             },
                         )
                         round_return_ext[aid] = 0.0
                         round_discount[aid] = 1.0
+                        option_speed_sum[aid] = 0.0
+                        option_speed_count[aid] = 0
 
             steps_collected += 1
             last_obs = next_obs
@@ -889,10 +1027,14 @@ class TrainerSyncOnPolicy:
                         info={
                             "goal_dist_start": float(np.linalg.norm(states_round[aid].goal - states_round[aid].position)),
                             "boundary_clearance_start": float(self._boundary_clearance(states_round[aid], world_size)),
+                            "blocked_score_start": float(self._compute_blocked_score(states_round[aid], self.env.get_obstacles())),
                         },
                     )
                     option_start_goal_dist[aid] = float(np.linalg.norm(states_round[aid].goal - states_round[aid].position))
                     option_start_boundary_clearance[aid] = float(self._boundary_clearance(states_round[aid], world_size))
+                    option_start_blocked_score[aid] = float(self._compute_blocked_score(states_round[aid], self.env.get_obstacles()))
+                    option_speed_sum[aid] = 0.0
+                    option_speed_count[aid] = 0
 
         for aid in agent_ids:
             if self.buffer.has_open_high_option(aid):
@@ -904,16 +1046,41 @@ class TrainerSyncOnPolicy:
                 )
                 boundary_clearance_end = self._boundary_clearance(final_states[aid], world_size)
                 boundary_clearance_start = float(option_start_boundary_clearance.get(aid, boundary_clearance_end))
+                blocked_score_end = self._compute_blocked_score(final_states[aid], self.env.get_obstacles())
+                blocked_score_start = float(option_start_blocked_score.get(aid, blocked_score_end))
                 boundary_recovery_bonus = 0.0
                 threshold = float(self.hooks.high_option_boundary_threshold)
                 if threshold > 0.0 and boundary_clearance_start <= threshold:
                     boundary_recovery_bonus = float(self.hooks.high_option_boundary_recovery_coef) * float(
                         boundary_clearance_end - boundary_clearance_start
                     )
+                trap_relief_bonus = float(self.hooks.high_option_trap_relief_coef) * float(
+                    blocked_score_start - blocked_score_end
+                )
+                trap_enter_penalty = float(self.hooks.high_option_trap_enter_coef) * float(
+                    blocked_score_start * max(0.0, goal_dist_start - goal_dist_end)
+                )
+                option_progress = float(goal_dist_start - goal_dist_end)
+                avg_speed = float(option_speed_sum.get(aid, 0.0) / max(1, option_speed_count.get(aid, 0)))
+                stuck_penalty = 0.0
+                if (
+                    float(self.hooks.high_option_stuck_penalty_coef) > 0.0
+                    and blocked_score_end >= float(self.hooks.high_option_stuck_blocked_threshold)
+                    and option_progress <= float(self.hooks.high_option_stuck_progress_threshold)
+                    and avg_speed <= float(self.hooks.high_option_stuck_speed_threshold)
+                ):
+                    stuck_penalty = float(self.hooks.high_option_stuck_penalty_coef)
                 self.close_high_option(
                     agent_id=aid,
                     t_end=self.coordinator.t,
-                    return_ext=round_return_ext[aid] + option_progress_bonus + boundary_recovery_bonus,
+                    return_ext=(
+                        round_return_ext[aid]
+                        + option_progress_bonus
+                        + boundary_recovery_bonus
+                        + trap_relief_bonus
+                        - trap_enter_penalty
+                        - stuck_penalty
+                    ),
                     done=done_by_agent[aid],
                     sync_switch=True,
                     info={
@@ -924,6 +1091,12 @@ class TrainerSyncOnPolicy:
                         "boundary_clearance_start": boundary_clearance_start,
                         "boundary_clearance_end": boundary_clearance_end,
                         "boundary_recovery_bonus": boundary_recovery_bonus,
+                        "blocked_score_start": blocked_score_start,
+                        "blocked_score_end": blocked_score_end,
+                        "trap_relief_bonus": trap_relief_bonus,
+                        "trap_enter_penalty": trap_enter_penalty,
+                        "option_avg_speed": avg_speed,
+                        "stuck_penalty": stuck_penalty,
                     },
                 )
 

@@ -1,0 +1,36 @@
+{
+  "seed": 42,
+  "total_iterations": 1000,
+  "final_eval": {
+    "eval_n_episodes": 3.0,
+    "eval_success_rate": 1.0,
+    "eval_reach_rate": 1.0,
+    "eval_collision_rate": 0.0,
+    "eval_safe_reach_ratio": 1.0,
+    "eval_min_h_agent": 0.35233184695243835,
+    "eval_min_h_obstacle": 0.9685746431350708,
+    "eval_avg_traj_length": 10.740075948730615,
+    "eval_avg_skill_switches": 74.33333333333333,
+    "eval_qp_feasible_rate": 1.0,
+    "eval_avg_steps": 174.33333333333334,
+    "eval_avg_episode_return": 278.09069171058354
+  },
+  "last_eval_during_train": {
+    "eval_n_episodes": 1.0,
+    "eval_success_rate": 1.0,
+    "eval_reach_rate": 1.0,
+    "eval_collision_rate": 0.0,
+    "eval_safe_reach_ratio": 1.0,
+    "eval_min_h_agent": 0.2967515289783478,
+    "eval_min_h_obstacle": 1.2756000757217407,
+    "eval_avg_traj_length": 11.75999512981798,
+    "eval_avg_skill_switches": 84.0,
+    "eval_qp_feasible_rate": 1.0,
+    "eval_avg_steps": 200.0,
+    "eval_avg_episode_return": 356.18543988606007
+  },
+  "run_dir": "artifacts/hmarl_cbf_paper_async/phi_ppo_async_margin_penalty",
+  "paper_subset": true,
+  "synchronization_mode": "async",
+  "low_update_mode": "onpolicy_ppo"
+}

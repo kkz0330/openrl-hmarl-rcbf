@@ -1,0 +1,2 @@
+scene_seed,steps,sim_seconds,safe_reach_count,n_agents,safe_reach_ratio,success_round,terminated,truncated,active_skill_ids,episode,media_path
+12345,29,2.9000000000000004,0,1,0.0,0,1,0,"{""0"": 4}",0,artifacts/hmarl_cbf_eval/eval_trapaware_square_open_trap_once/media/episode_000.gif

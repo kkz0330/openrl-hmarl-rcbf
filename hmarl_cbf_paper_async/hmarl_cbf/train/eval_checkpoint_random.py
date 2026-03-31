@@ -57,7 +57,15 @@ def _parse_args() -> argparse.Namespace:
         "--scenario",
         type=str,
         default="",
-        choices=["", "corridor_8uav_dual_passage"],
+        choices=[
+            "",
+            "corridor_8uav_dual_passage",
+            "square_open_trap_single",
+            "u_trap_single",
+            "narrow_gap_single",
+            "bottleneck_offset_single",
+            "congested_pocket_8uav",
+        ],
         help="Optional built-in fixed scenario.",
     )
     parser.add_argument(
@@ -139,6 +147,127 @@ def _corridor_8uav_dual_passage(world_size: float, agent_radius: float) -> Tuple
     return states, obstacles
 
 
+def _square_open_trap_single(world_size: float, agent_radius: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    del world_size
+    states: List[Dict[str, Any]] = [
+        {
+            "position": np.asarray([0.0, 0.0], dtype=np.float32),
+            "velocity": np.asarray([0.0, 0.0], dtype=np.float32),
+            "goal": np.asarray([0.0, -5.5], dtype=np.float32),
+            "radius": float(agent_radius),
+        }
+    ]
+    # Three-sided square-like enclosure open at the top. Reaching the goal below
+    # requires first moving away from the goal toward the opening.
+    obstacles: List[Dict[str, Any]] = [
+        {"center": np.asarray([-1.8, -0.9], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([-1.8, 0.9], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([1.8, -0.9], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([1.8, 0.9], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([0.0, -1.9], dtype=np.float32), "radius": 0.9},
+    ]
+    return states, obstacles
+
+
+def _u_trap_single(world_size: float, agent_radius: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    del world_size
+    states: List[Dict[str, Any]] = [
+        {
+            "position": np.asarray([0.0, 0.2], dtype=np.float32),
+            "velocity": np.asarray([0.0, 0.0], dtype=np.float32),
+            "goal": np.asarray([0.0, 5.8], dtype=np.float32),
+            "radius": float(agent_radius),
+        }
+    ]
+    # U-shape open downward while goal is above the closed side.
+    obstacles: List[Dict[str, Any]] = [
+        {"center": np.asarray([-1.8, 1.4], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([-1.8, -0.2], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([1.8, 1.4], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([1.8, -0.2], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([0.0, 2.6], dtype=np.float32), "radius": 0.9},
+    ]
+    return states, obstacles
+
+
+def _narrow_gap_single(world_size: float, agent_radius: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    del world_size
+    states: List[Dict[str, Any]] = [
+        {
+            "position": np.asarray([-5.0, 0.0], dtype=np.float32),
+            "velocity": np.asarray([0.0, 0.0], dtype=np.float32),
+            "goal": np.asarray([5.0, 0.0], dtype=np.float32),
+            "radius": float(agent_radius),
+        }
+    ]
+    # Center gap looks tempting but is too tight once safety margins are considered.
+    obstacles: List[Dict[str, Any]] = [
+        {"center": np.asarray([0.0, 1.15], dtype=np.float32), "radius": 0.85},
+        {"center": np.asarray([0.0, -1.15], dtype=np.float32), "radius": 0.85},
+        {"center": np.asarray([2.4, 2.0], dtype=np.float32), "radius": 0.75},
+        {"center": np.asarray([2.4, -2.0], dtype=np.float32), "radius": 0.75},
+    ]
+    return states, obstacles
+
+
+def _bottleneck_offset_single(world_size: float, agent_radius: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    del world_size
+    states: List[Dict[str, Any]] = [
+        {
+            "position": np.asarray([-5.5, -0.6], dtype=np.float32),
+            "velocity": np.asarray([0.0, 0.0], dtype=np.float32),
+            "goal": np.asarray([5.5, 2.4], dtype=np.float32),
+            "radius": float(agent_radius),
+        }
+    ]
+    # A vertical barrier with two passages; the lower passage is nearer initially
+    # but the upper route aligns better with the offset goal.
+    obstacles: List[Dict[str, Any]] = [
+        {"center": np.asarray([0.0, -3.0], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([0.0, -1.2], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([0.0, 1.2], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([0.0, 3.0], dtype=np.float32), "radius": 0.9},
+        {"center": np.asarray([2.3, -0.8], dtype=np.float32), "radius": 0.85},
+    ]
+    return states, obstacles
+
+
+def _congested_pocket_8uav(world_size: float, agent_radius: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    del world_size
+    left_x = -5.4
+    right_x = 5.4
+    ys = [-3.0, -1.0, 1.0, 3.0]
+    states: List[Dict[str, Any]] = []
+    for y in ys:
+        states.append(
+            {
+                "position": np.asarray([left_x, y], dtype=np.float32),
+                "velocity": np.asarray([0.0, 0.0], dtype=np.float32),
+                "goal": np.asarray([right_x, -y], dtype=np.float32),
+                "radius": float(agent_radius),
+            }
+        )
+    for y in ys:
+        states.append(
+            {
+                "position": np.asarray([right_x, y], dtype=np.float32),
+                "velocity": np.asarray([0.0, 0.0], dtype=np.float32),
+                "goal": np.asarray([left_x, -y], dtype=np.float32),
+                "radius": float(agent_radius),
+            }
+        )
+    # Semi-enclosed central pocket with obstacles that encourage local crowding.
+    obstacles: List[Dict[str, Any]] = [
+        {"center": np.asarray([-0.8, 2.2], dtype=np.float32), "radius": 0.95},
+        {"center": np.asarray([0.8, 2.2], dtype=np.float32), "radius": 0.95},
+        {"center": np.asarray([-0.8, -2.2], dtype=np.float32), "radius": 0.95},
+        {"center": np.asarray([0.8, -2.2], dtype=np.float32), "radius": 0.95},
+        {"center": np.asarray([0.0, 0.0], dtype=np.float32), "radius": 1.0},
+        {"center": np.asarray([2.8, 0.0], dtype=np.float32), "radius": 0.8},
+    ]
+    return states, obstacles
+
+
 def _parse_states(raw: str, agent_radius: float) -> List[Dict[str, Any]]:
     payload = json.loads(raw)
     if not isinstance(payload, list) or len(payload) == 0:
@@ -181,6 +310,16 @@ def _resolve_fixed_scene(args: argparse.Namespace, cfg: Dict[str, Any]) -> Tuple
     world_size = float(env_cfg.get("world_size", 10.0))
     if args.scenario == "corridor_8uav_dual_passage":
         return _corridor_8uav_dual_passage(world_size=world_size, agent_radius=agent_radius)
+    if args.scenario == "square_open_trap_single":
+        return _square_open_trap_single(world_size=world_size, agent_radius=agent_radius)
+    if args.scenario == "u_trap_single":
+        return _u_trap_single(world_size=world_size, agent_radius=agent_radius)
+    if args.scenario == "narrow_gap_single":
+        return _narrow_gap_single(world_size=world_size, agent_radius=agent_radius)
+    if args.scenario == "bottleneck_offset_single":
+        return _bottleneck_offset_single(world_size=world_size, agent_radius=agent_radius)
+    if args.scenario == "congested_pocket_8uav":
+        return _congested_pocket_8uav(world_size=world_size, agent_radius=agent_radius)
     if str(args.states_json).strip():
         obstacles_raw = str(args.obstacles_json).strip() or "[]"
         return _parse_states(str(args.states_json), agent_radius=agent_radius), _parse_obstacles(obstacles_raw)

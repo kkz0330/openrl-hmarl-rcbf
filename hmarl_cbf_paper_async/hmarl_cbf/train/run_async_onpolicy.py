@@ -16,14 +16,16 @@ except ImportError as exc:  # pragma: no cover - runtime entrypoint
     raise RuntimeError("PyYAML is required to load training config") from exc
 
 from hmarl_cbf.train.run_sync_onpolicy import (
+    _FixedSceneMixer,
     _build_trainer,
     _make_run_dir,
+    _resume_full_training_state,
     _restore_full_training_env,
     _seed_all,
     _set_high_entropy_coef,
+    _set_low_entropy_coef,
     _set_low_update_mode_schedule,
     _set_training_curriculum_stage,
-    _set_low_entropy_coef,
     _write_history_csv,
 )
 
@@ -44,6 +46,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--final-render-gif", action="store_true")
     parser.add_argument("--final-render-png", action="store_true")
     parser.add_argument("--deterministic-eval", action="store_true")
+    parser.add_argument("--resume-from", type=str, default="", help="Resume full training state from an existing checkpoint.")
     return parser.parse_args()
 
 
@@ -81,18 +84,39 @@ def main() -> None:
         eval_episodes=max(1, int(args.eval_episodes)),
         deterministic_eval=bool(args.deterministic_eval),
     )
+    trainer.set_training_scene_sampler(_FixedSceneMixer(cfg))
+
+    resume_report: Dict[str, Any] = {}
+    resume_path = str(args.resume_from).strip()
+    if resume_path:
+        resume_report = _resume_full_training_state(
+            trainer=trainer,
+            high_opt=high_opt,
+            low_opt=low_opt,
+            checkpoint_path=Path(resume_path),
+        )
+        print(
+            "RESUME_FULL "
+            f"checkpoint={resume_report['checkpoint']} "
+            f"resume_iteration={resume_report['resume_iteration']} "
+            f"high_opt={int(bool(resume_report['loaded_high_optimizer']))} "
+            f"low_opt={int(bool(resume_report['loaded_low_optimizer']))}"
+        )
 
     history: list[Dict[str, float]] = []
     last_eval: Dict[str, float] = {}
     eval_success_history: list[float] = []
     total_iterations = int(cfg["train"]["total_iterations"])
+    resume_iteration = int(resume_report.get("resume_iteration", 0))
+    display_total_iterations = int(resume_iteration + total_iterations)
     eval_interval = max(1, int(cfg["train"]["eval_interval"]))
     video_interval = max(0, int(args.video_interval))
 
-    for itr in range(1, total_iterations + 1):
+    for itr_local in range(1, total_iterations + 1):
+        itr = int(resume_iteration + itr_local)
         curriculum_stage = _set_training_curriculum_stage(trainer, cfg, itr)
-        high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
-        low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, total_iterations)
+        high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, display_total_iterations)
+        low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, display_total_iterations)
         low_update_mode_stage = _set_low_update_mode_schedule(trainer, cfg["train"], itr)
         rollout = trainer.collect_rollout()
         _restore_full_training_env(trainer)
@@ -101,6 +125,7 @@ def main() -> None:
         row = {
             "iteration": float(itr),
             "curriculum_single_agent_stage": float(1.0 if curriculum_stage == "single_agent_no_obstacle" else 0.0),
+            "mixed_fixed_scene_stage": float(0.0 if str(getattr(trainer, "last_rollout_scene_name", "random")) == "random" else 1.0),
             "steps_collected": float(rollout.get("steps_collected", 0.0)),
             "episode_return_mean": float(rollout.get("episode_return_mean", 0.0)),
             "safe_reach_ratio": float(rollout.get("safe_reach_ratio", 0.0)),
@@ -125,8 +150,8 @@ def main() -> None:
             "low_h_eig_min": float(low.get("low_h_eig_min", 0.0)),
             "low_h_eig_max": float(low.get("low_h_eig_max", 0.0)),
         }
-        should_eval = bool(itr == 1 or itr % eval_interval == 0 or itr == total_iterations)
-        should_video = bool(video_interval > 0 and (itr % video_interval == 0))
+        should_eval = bool(itr_local == 1 or itr_local % eval_interval == 0 or itr_local == total_iterations)
+        should_video = bool(video_interval > 0 and (itr_local % video_interval == 0))
 
         if should_eval:
             prev_render = bool(trainer.hooks.eval_render)
@@ -151,7 +176,7 @@ def main() -> None:
                 row["conv_eval_success_delta_w5"] = abs(recent - prev)
 
             print(
-                f"[iter {itr}/{total_iterations}] "
+                f"[iter {itr}/{display_total_iterations}] "
                 f"ret={row['episode_return_mean']:.4f} "
                 f"safe={row['safe_reach_ratio']:.4f} "
                 f"skillH={row['skill_entropy_norm']:.4f} "
@@ -179,6 +204,7 @@ def main() -> None:
             "low_policy": trainer.low_policy.state_dict(),
             "high_optimizer": high_opt.state_dict(),
             "low_optimizer": low_opt.state_dict(),
+            "last_iteration": int(display_total_iterations),
         },
         run_dir / "checkpoints" / "last.pt",
     )
@@ -192,6 +218,8 @@ def main() -> None:
         "paper_subset": True,
         "synchronization_mode": str(cfg["synchronization"].get("mode", "async")),
         "low_update_mode": str(cfg["train"].get("low_update_mode", "onpolicy_ppo")),
+        "resume_full": resume_report,
+        "resume_iteration": int(resume_iteration),
     }
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (output_root / "LATEST_RUN").write_text(str(run_dir), encoding="utf-8")

@@ -1,0 +1,2 @@
+scene_seed,steps,sim_seconds,safe_reach_count,n_agents,safe_reach_ratio,success_round,terminated,truncated,active_skill_ids,episode,media_path
+12345,400,40.0,2,8,0.25,0,0,1,"{""0"": 0, ""1"": 2, ""2"": 2, ""3"": 2, ""4"": 2, ""5"": 2, ""6"": 2, ""7"": 2}",0,artifacts/hmarl_cbf_eval/eval_corridor_8uav_dual_passage_once/media/episode_000.gif

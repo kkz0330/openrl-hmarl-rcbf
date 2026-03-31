@@ -200,6 +200,9 @@ class HierRolloutBuffer:
         high_adv_by_option: Dict[Tuple[int, int], float] | None = None,
         divide_high_adv_by_n_agents: bool = True,
         n_agents: int = 1,
+        safety_margin_coef: float = 0.0,
+        safety_margin_h_agent: float = 0.0,
+        safety_margin_h_obstacle: float = 0.0,
     ) -> Dict[str, float]:
         high_adv_by_option = dict(high_adv_by_option or {})
         by_agent = self.low_by_agent()
@@ -208,9 +211,13 @@ class HierRolloutBuffer:
         adv_vals: List[float] = []
         mix_vals: List[float] = []
         high_mix_vals: List[float] = []
+        safety_penalty_vals: List[float] = []
 
         eta = float(max(0.0, min(1.0, reward_mix_eta)))
         denom = float(max(1, n_agents)) if divide_high_adv_by_n_agents else 1.0
+        margin_coef = float(max(0.0, safety_margin_coef))
+        h_agent_margin = float(max(0.0, safety_margin_h_agent))
+        h_obs_margin = float(max(0.0, safety_margin_h_obstacle))
 
         for _, seq in by_agent.items():
             running = 0.0
@@ -219,10 +226,20 @@ class HierRolloutBuffer:
                     running = 0.0
                 high_adv = float(high_adv_by_option.get((int(tr.agent_id), int(tr.option_k)), 0.0))
                 high_term = high_adv / denom
+                min_h_agent = float(tr.info.get("min_h_agent", 0.0))
+                min_h_obstacle = float(tr.info.get("min_h_obstacle", 0.0))
+                safety_penalty = 0.0
+                if margin_coef > 0.0:
+                    if h_agent_margin > 0.0 and min_h_agent < h_agent_margin:
+                        safety_penalty += (h_agent_margin - min_h_agent) ** 2
+                    if h_obs_margin > 0.0 and min_h_obstacle < h_obs_margin:
+                        safety_penalty += (h_obs_margin - min_h_obstacle) ** 2
+                    safety_penalty *= margin_coef
                 reward = (
                     eta * high_term
                     + (1.0 - eta) * float(tr.reward_int)
                     + float(ext_reward_coef) * float(tr.reward_ext)
+                    - float(safety_penalty)
                 )
                 running = reward + gamma * running
                 tr.return_target = float(running)
@@ -234,6 +251,7 @@ class HierRolloutBuffer:
                 adv_vals.append(float(tr.advantage))
                 mix_vals.append(float(reward))
                 high_mix_vals.append(float(high_term))
+                safety_penalty_vals.append(float(safety_penalty))
                 n += 1
 
         if n == 0:
@@ -243,6 +261,7 @@ class HierRolloutBuffer:
                 "adv_mean": 0.0,
                 "reward_mix_mean": 0.0,
                 "high_adv_mix_mean": 0.0,
+                "safety_margin_penalty_mean": 0.0,
             }
         return {
             "n_samples": float(n),
@@ -250,4 +269,5 @@ class HierRolloutBuffer:
             "adv_mean": float(sum(adv_vals) / len(adv_vals)),
             "reward_mix_mean": float(sum(mix_vals) / len(mix_vals)),
             "high_adv_mix_mean": float(sum(high_mix_vals) / len(high_mix_vals)),
+            "safety_margin_penalty_mean": float(sum(safety_penalty_vals) / max(1, len(safety_penalty_vals))),
         }

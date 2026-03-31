@@ -1,0 +1,2 @@
+scene_seed,steps,sim_seconds,safe_reach_count,n_agents,safe_reach_ratio,success_round,terminated,truncated,active_skill_ids,episode,media_path
+12345,219,21.900000000000002,1,1,1.0,1,1,0,"{""0"": 2}",0,artifacts/hmarl_cbf_eval/eval_narrow_gap_single_once/media/episode_000.gif

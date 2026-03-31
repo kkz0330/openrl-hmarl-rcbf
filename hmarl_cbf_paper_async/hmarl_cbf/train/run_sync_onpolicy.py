@@ -32,6 +32,7 @@ from hmarl_cbf.control import (
 from hmarl_cbf.env import MultiUAV2DEnv
 from hmarl_cbf.high_level import MAPPOConfig, OnPolicyMAPPO
 from hmarl_cbf.policies import HighLevelPolicy, LowLevelQPPolicy
+from hmarl_cbf.scenarios import build_fixed_scene
 from hmarl_cbf.skills import SkillRuntimeManager, build_default_skill_library
 from hmarl_cbf.train import TrainerHooks, TrainerSyncOnPolicy
 
@@ -69,6 +70,12 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Also warm start low-level shared encoder/embedding/fusion backbone.",
     )
+    parser.add_argument(
+        "--resume-from",
+        type=str,
+        default="",
+        help="Resume full training state from an existing checkpoint.",
+    )
     return parser.parse_args()
 
 
@@ -101,6 +108,64 @@ def _seed_all(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def _infer_checkpoint_iteration(checkpoint_path: Path, ckpt: Dict[str, Any]) -> int:
+    if "last_iteration" in ckpt:
+        try:
+            return int(ckpt["last_iteration"])
+        except Exception:
+            pass
+    run_dir = checkpoint_path.parents[1] if checkpoint_path.name == "last.pt" else checkpoint_path.parent
+    history_path = run_dir / "train_history.csv"
+    if history_path.exists():
+        try:
+            with history_path.open("r", encoding="utf-8", newline="") as f:
+                rows = list(csv.DictReader(f))
+            if rows:
+                return int(float(rows[-1].get("iteration", "0") or 0))
+        except Exception:
+            pass
+    summary_path = run_dir / "summary.json"
+    if summary_path.exists():
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+            if "total_iterations" in payload:
+                return int(payload["total_iterations"])
+        except Exception:
+            pass
+    return 0
+
+
+def _resume_full_training_state(
+    trainer: TrainerSyncOnPolicy,
+    high_opt: Any,
+    low_opt: Any,
+    checkpoint_path: Path,
+) -> Dict[str, Any]:
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"resume checkpoint not found: {checkpoint_path}")
+    ckpt = torch.load(checkpoint_path, map_location="cpu")
+    if not isinstance(ckpt, dict):
+        raise ValueError(f"invalid resume checkpoint: {checkpoint_path}")
+    if "high_policy" not in ckpt or "low_policy" not in ckpt:
+        raise ValueError("resume checkpoint must contain high_policy and low_policy")
+    trainer.high_policy.load_state_dict(ckpt["high_policy"], strict=True)
+    trainer.low_policy.load_state_dict(ckpt["low_policy"], strict=True)
+    loaded_high_opt = False
+    loaded_low_opt = False
+    if "high_optimizer" in ckpt:
+        high_opt.load_state_dict(ckpt["high_optimizer"])
+        loaded_high_opt = True
+    if "low_optimizer" in ckpt:
+        low_opt.load_state_dict(ckpt["low_optimizer"])
+        loaded_low_opt = True
+    return {
+        "checkpoint": str(checkpoint_path),
+        "resume_iteration": int(_infer_checkpoint_iteration(checkpoint_path, ckpt)),
+        "loaded_high_optimizer": bool(loaded_high_opt),
+        "loaded_low_optimizer": bool(loaded_low_opt),
+    }
 
 
 def _set_high_entropy_coef(trainer: TrainerSyncOnPolicy, train_cfg: Dict[str, Any], itr: int, total_iterations: int) -> float:
@@ -142,6 +207,47 @@ def _set_low_update_mode_schedule(trainer: TrainerSyncOnPolicy, train_cfg: Dict[
     else:
         trainer.hooks.low_update_mode = main_mode
     return str(trainer.hooks.low_update_mode)
+
+
+class _FixedSceneMixer:
+    def __init__(self, cfg: Dict[str, Any]) -> None:
+        mix_cfg = dict(cfg.get("scenario_mix", {}))
+        self.enabled = bool(mix_cfg.get("enabled", False))
+        self.general_random_prob = float(mix_cfg.get("general_random_prob", 1.0))
+        self.entries: list[tuple[str, float]] = []
+        raw_entries = list(mix_cfg.get("scenarios", []))
+        for item in raw_entries:
+            if isinstance(item, str):
+                self.entries.append((str(item), 1.0))
+            elif isinstance(item, dict):
+                name = str(item.get("name", "")).strip()
+                prob = float(item.get("prob", 0.0))
+                if name:
+                    self.entries.append((name, prob))
+        total = self.general_random_prob + sum(prob for _, prob in self.entries)
+        self.total_weight = float(total)
+
+    def __call__(self, env: MultiUAV2DEnv) -> tuple[str, Dict[str, Any] | None] | None:
+        if not self.enabled or self.total_weight <= 0.0:
+            return None
+        draw = random.random() * self.total_weight
+        cursor = self.general_random_prob
+        if draw < cursor:
+            return "random", None
+        for name, prob in self.entries:
+            cursor += prob
+            if draw <= cursor:
+                states, obstacles = build_fixed_scene(
+                    name=name,
+                    world_size=float(env.world_size),
+                    agent_radius=float(env.agent_radius),
+                )
+                if len(states) != int(env.n_agents):
+                    raise ValueError(
+                        f"scenario_mix scene {name} has {len(states)} agents but env expects {env.n_agents}"
+                    )
+                return str(name), {"states": states, "obstacles": obstacles}
+        return "random", None
 
 
 def _set_training_curriculum_stage(trainer: TrainerSyncOnPolicy, cfg: Dict[str, Any], itr: int) -> str:
@@ -385,9 +491,21 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         low_ext_reward_coef=float(cfg["train"]["low_ext_reward_coef"]),
         low_reward_mix_eta=float(cfg["train"].get("low_reward_mix_eta", 0.0)),
         low_reward_mix_divide_by_n_agents=bool(cfg["train"].get("low_reward_mix_divide_by_n_agents", True)),
+        low_safety_margin_coef=float(cfg["train"].get("low_safety_margin_coef", 0.0)),
+        low_safety_margin_h_agent=float(cfg["train"].get("low_safety_margin_h_agent", 0.0)),
+        low_safety_margin_h_obstacle=float(cfg["train"].get("low_safety_margin_h_obstacle", 0.0)),
         high_option_progress_coef=float(cfg["train"].get("high_option_progress_coef", 0.0)),
         high_option_boundary_recovery_coef=float(cfg["train"].get("high_option_boundary_recovery_coef", 0.0)),
         high_option_boundary_threshold=float(cfg["train"].get("high_option_boundary_threshold", 0.0)),
+        high_option_trap_relief_coef=float(cfg["train"].get("high_option_trap_relief_coef", 0.0)),
+        high_option_trap_enter_coef=float(cfg["train"].get("high_option_trap_enter_coef", 0.0)),
+        high_option_stuck_penalty_coef=float(cfg["train"].get("high_option_stuck_penalty_coef", 0.0)),
+        high_option_stuck_blocked_threshold=float(cfg["train"].get("high_option_stuck_blocked_threshold", 0.5)),
+        high_option_stuck_progress_threshold=float(cfg["train"].get("high_option_stuck_progress_threshold", 0.1)),
+        high_option_stuck_speed_threshold=float(cfg["train"].get("high_option_stuck_speed_threshold", 0.2)),
+        high_trap_blocked_lookahead=float(cfg["train"].get("high_trap_blocked_lookahead", 4.0)),
+        high_trap_blocked_lateral_window=float(cfg["train"].get("high_trap_blocked_lateral_window", 3.0)),
+        high_trap_blocked_extra_margin=float(cfg["train"].get("high_trap_blocked_extra_margin", 0.1)),
         low_update_epochs=int(cfg["train"]["low_update_epochs"]),
         low_max_samples_per_iter=int(cfg["train"]["low_max_samples_per_iter"]),
         low_target_step_scale=float(cfg["train"]["low_target_step_scale"]),
@@ -463,6 +581,24 @@ def main() -> None:
         eval_episodes=max(1, int(args.eval_episodes)),
         deterministic_eval=bool(args.deterministic_eval),
     )
+    trainer.set_training_scene_sampler(_FixedSceneMixer(cfg))
+
+    resume_report: Dict[str, Any] = {}
+    resume_path = str(args.resume_from).strip()
+    if resume_path:
+        resume_report = _resume_full_training_state(
+            trainer=trainer,
+            high_opt=high_opt,
+            low_opt=low_opt,
+            checkpoint_path=Path(resume_path),
+        )
+        print(
+            "RESUME_FULL "
+            f"checkpoint={resume_report['checkpoint']} "
+            f"resume_iteration={resume_report['resume_iteration']} "
+            f"high_opt={int(bool(resume_report['loaded_high_optimizer']))} "
+            f"low_opt={int(bool(resume_report['loaded_low_optimizer']))}"
+        )
     warm_cfg = dict(cfg.get("warmstart", {}))
     warm_path_arg = str(args.warmstart_low_hfg_from).strip()
     warm_path_cfg = str(warm_cfg.get("low_hfg_checkpoint", "")).strip()
@@ -488,13 +624,16 @@ def main() -> None:
     last_eval: Dict[str, float] = {}
     eval_success_history: list[float] = []
     total_iterations = int(cfg["train"]["total_iterations"])
+    resume_iteration = int(resume_report.get("resume_iteration", 0))
+    display_total_iterations = int(resume_iteration + total_iterations)
     eval_interval = max(1, int(cfg["train"]["eval_interval"]))
     video_interval = max(0, int(args.video_interval))
 
-    for itr in range(1, total_iterations + 1):
+    for itr_local in range(1, total_iterations + 1):
+        itr = int(resume_iteration + itr_local)
         curriculum_stage = _set_training_curriculum_stage(trainer, cfg, itr)
-        high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, total_iterations)
-        low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, total_iterations)
+        high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, display_total_iterations)
+        low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, display_total_iterations)
         low_update_mode_stage = _set_low_update_mode_schedule(trainer, cfg["train"], itr)
         rollout = trainer.collect_rollout()
         _restore_full_training_env(trainer)
@@ -503,6 +642,7 @@ def main() -> None:
         row = {
             "iteration": float(itr),
             "curriculum_single_agent_stage": float(1.0 if curriculum_stage == "single_agent_no_obstacle" else 0.0),
+            "mixed_fixed_scene_stage": float(0.0 if str(getattr(trainer, "last_rollout_scene_name", "random")) == "random" else 1.0),
             "steps_collected": float(rollout.get("steps_collected", 0.0)),
             "episode_return_mean": float(rollout.get("episode_return_mean", 0.0)),
             "safe_reach_ratio": float(rollout.get("safe_reach_ratio", 0.0)),
@@ -527,8 +667,8 @@ def main() -> None:
             "low_h_eig_min": float(low.get("low_h_eig_min", 0.0)),
             "low_h_eig_max": float(low.get("low_h_eig_max", 0.0)),
         }
-        should_eval = bool(itr == 1 or itr % eval_interval == 0 or itr == total_iterations)
-        should_video = bool(video_interval > 0 and (itr % video_interval == 0))
+        should_eval = bool(itr_local == 1 or itr_local % eval_interval == 0 or itr_local == total_iterations)
+        should_video = bool(video_interval > 0 and (itr_local % video_interval == 0))
 
         if should_eval:
             prev_render = bool(trainer.hooks.eval_render)
@@ -552,7 +692,7 @@ def main() -> None:
                 recent = float(np.mean(eval_success_history[-5:]))
                 row["conv_eval_success_delta_w5"] = abs(recent - prev)
             print(
-                f"[iter {itr}/{total_iterations}] "
+                f"[iter {itr}/{display_total_iterations}] "
                 f"ret={row['episode_return_mean']:.4f} "
                 f"safe={row['safe_reach_ratio']:.4f} "
                 f"skillH={row['skill_entropy_norm']:.4f} "
@@ -565,7 +705,7 @@ def main() -> None:
                 f"Hmax={row['low_h_eig_max']:.3f}"
             )
             if should_video:
-                print(f"[iter {itr}/{total_iterations}] periodic_media_dir={run_dir / 'eval_media' / f'iter_{itr:04d}'}")
+                print(f"[iter {itr}/{display_total_iterations}] periodic_media_dir={run_dir / 'eval_media' / f'iter_{itr:04d}'}")
         elif should_video:
             prev_render = bool(trainer.hooks.eval_render)
             prev_render_gif = bool(trainer.hooks.eval_render_gif)
@@ -577,7 +717,7 @@ def main() -> None:
             trainer.hooks.eval_render = prev_render
             trainer.hooks.eval_render_gif = prev_render_gif
             trainer.hooks.eval_render_dir = prev_render_dir
-            print(f"[iter {itr}/{total_iterations}] periodic_media_dir={run_dir / 'eval_media' / f'iter_{itr:04d}'}")
+            print(f"[iter {itr}/{display_total_iterations}] periodic_media_dir={run_dir / 'eval_media' / f'iter_{itr:04d}'}")
         history.append(row)
 
     trainer.hooks.eval_episodes = max(1, int(args.final_eval_episodes))
@@ -594,6 +734,7 @@ def main() -> None:
             "low_policy": trainer.low_policy.state_dict(),
             "high_optimizer": high_opt.state_dict(),
             "low_optimizer": low_opt.state_dict(),
+            "last_iteration": int(display_total_iterations),
         },
         run_dir / "checkpoints" / "last.pt",
     )
@@ -605,6 +746,8 @@ def main() -> None:
         "last_eval_during_train": last_eval,
         "run_dir": str(run_dir),
         "warmstart_low_hfg": warm_report,
+        "resume_full": resume_report,
+        "resume_iteration": int(resume_iteration),
     }
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (output_root / "LATEST_RUN").write_text(str(run_dir), encoding="utf-8")
