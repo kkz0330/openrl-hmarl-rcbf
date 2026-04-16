@@ -468,16 +468,18 @@ def build_diff_constraint_constants(
                 offset_np = np.asarray(geom["offset"], dtype=np.float32).reshape(2)
                 offset = torch.tensor(offset_np, dtype=dtype, device=dev)
                 sign = float(geom["sign"])
-                d_safe_obs_eff = d_safe_obs + _rect_base_extra_margin(rect_base_margin_extra) + _rect_corner_extra_margin(
-                    state_i=state_i,
-                    obs_norm=obs_norm,
-                    geom=geom,
-                    enabled=rect_corner_margin_enabled,
-                    margin_max=rect_corner_margin_max,
-                    threshold=rect_corner_proximity_distance,
-                    speed_min=rect_corner_speed_min,
-                    alignment_power=rect_corner_alignment_power,
-                )
+                d_safe_obs_eff = d_safe_obs + _rect_base_extra_margin(rect_base_margin_extra)
+                if str(geom.get("face_role", "primary")).strip().lower() != "secondary":
+                    d_safe_obs_eff += _rect_corner_extra_margin(
+                        state_i=state_i,
+                        obs_norm=obs_norm,
+                        geom=geom,
+                        enabled=rect_corner_margin_enabled,
+                        margin_max=rect_corner_margin_max,
+                        threshold=rect_corner_proximity_distance,
+                        speed_min=rect_corner_speed_min,
+                        alignment_power=rect_corner_alignment_power,
+                    )
                 if cbf_mode == "distributed_gcbfplus":
                     h0 = sign * torch.dot(offset, offset) - torch.tensor(float(d_safe_obs_eff**2), dtype=dtype, device=dev)
                     pv = torch.dot(offset, v_i)

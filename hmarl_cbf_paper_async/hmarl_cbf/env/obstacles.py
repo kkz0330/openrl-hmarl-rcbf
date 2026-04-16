@@ -258,7 +258,7 @@ def obstacle_cbf_geometries(
     local = _transform_to_local(point, center, yaw)
     inside = bool(np.all(np.abs(local) <= (half_extents + 1e-8)))
 
-    def _face_geometry(axis: int) -> Dict[str, Any]:
+    def _face_geometry(axis: int, face_role: str) -> Dict[str, Any]:
         sign_dir = 1.0 if float(local[axis]) >= 0.0 else -1.0
         other_axis = 1 - axis
         closest_local = local.astype(np.float32).copy()
@@ -283,10 +283,11 @@ def obstacle_cbf_geometries(
             "sign": sign,
             "active_mask": active_mask,
             "face_axis": int(axis),
+            "face_role": str(face_role),
         }
 
-    geom_x = _face_geometry(0)
-    geom_y = _face_geometry(1)
+    geom_x = _face_geometry(0, "candidate")
+    geom_y = _face_geometry(1, "candidate")
     dist_x = float(np.linalg.norm(np.asarray(geom_x["offset"], dtype=np.float32).reshape(2)))
     dist_y = float(np.linalg.norm(np.asarray(geom_y["offset"], dtype=np.float32).reshape(2)))
     if dist_x <= dist_y:
@@ -295,6 +296,7 @@ def obstacle_cbf_geometries(
         primary_axis, secondary_axis = 1, 0
 
     primary = geom_x if primary_axis == 0 else geom_y
+    primary["face_role"] = "primary"
     geometries: List[Dict[str, Any]] = [primary]
 
     if not rect_dual_edge_enabled:
@@ -311,6 +313,7 @@ def obstacle_cbf_geometries(
         return geometries
 
     secondary = geom_y if secondary_axis == 1 else geom_x
+    secondary["face_role"] = "secondary"
     secondary["corner_proximity"] = corner_proximity
     geometries[0]["corner_proximity"] = corner_proximity
     geometries.append(secondary)

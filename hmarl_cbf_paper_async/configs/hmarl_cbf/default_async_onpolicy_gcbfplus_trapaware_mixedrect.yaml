@@ -26,12 +26,12 @@ env:
   reward_collision_penalty: 3.0
   reward_oob_penalty: 2.5
   initial_speed_toward_goal: 0.0
-  obstacle_rect_prob: 0.5
+  obstacle_rect_prob: 0.35
   obstacle_circle_radius_min: 0.4
-  obstacle_circle_radius_max: 1.4
+  obstacle_circle_radius_max: 4.0
   obstacle_rect_half_extent_min: 0.45
-  obstacle_rect_half_extent_max: 1.2
-  obstacle_rect_yaw_max: 1.57079632679
+  obstacle_rect_half_extent_max: 2.0
+  obstacle_rect_yaw_max: 3.14159
   obstacle_allow_outside_world: false
   rect_base_margin_extra: 0.15
   rect_corner_margin_enabled: true
@@ -40,7 +40,7 @@ env:
   rect_corner_speed_min: 0.1
   rect_corner_alignment_power: 1.5
   rect_dual_edge_cbf_enabled: true
-  rect_dual_edge_proximity_distance: 0.35
+  rect_dual_edge_proximity_distance: 0.2
 
 synchronization:
   mode: async
@@ -93,7 +93,7 @@ skills:
     rect_corner_speed_min: 0.1
     rect_corner_alignment_power: 1.5
     rect_dual_edge_cbf_enabled: true
-    rect_dual_edge_proximity_distance: 0.35
+    rect_dual_edge_proximity_distance: 0.2
     w_accel: 0.05
     w_turn: 0.03
     w_speed_dev: 0.04
@@ -120,7 +120,7 @@ low_level_qp:
   phi_log_std_max: -1.5
   w_clf: 10.0
   w_cbf: 100.0
-  cbf_slack_max: 1.0
+  cbf_slack_max: 0.0
   cbf_k0: 1.0
   cbf_k1: 1.0
   clf_k: 1.0

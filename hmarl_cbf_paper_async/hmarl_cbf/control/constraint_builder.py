@@ -209,12 +209,14 @@ class ConstraintBuilder:
                 for geom in rect_geoms:
                     offset = np.asarray(geom["offset"], dtype=np.float32).reshape(2)
                     sign = float(geom["sign"])
-                    d_safe_obs_eff = d_safe_obs + _rect_base_extra_margin(overrides) + _rect_corner_extra_margin(
-                        state_i=state_i,
-                        obs_norm=obs_norm,
-                        geom=geom,
-                        overrides=overrides,
-                    )
+                    d_safe_obs_eff = d_safe_obs + _rect_base_extra_margin(overrides)
+                    if str(geom.get("face_role", "primary")).strip().lower() != "secondary":
+                        d_safe_obs_eff += _rect_corner_extra_margin(
+                            state_i=state_i,
+                            obs_norm=obs_norm,
+                            geom=geom,
+                            overrides=overrides,
+                        )
                     if cbf_mode == "distributed_gcbfplus":
                         h0 = float(sign * np.dot(offset, offset) - d_safe_obs_eff**2)
                         pv = float(np.dot(offset, vel))
