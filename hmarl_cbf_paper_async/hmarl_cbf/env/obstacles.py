@@ -320,6 +320,93 @@ def obstacle_cbf_geometries(
     return geometries
 
 
+def rect_smooth_barrier_geometry(
+    point: np.ndarray,
+    item: Dict[str, Any],
+    *,
+    inflation_margin: float,
+    tau: float,
+) -> Dict[str, Any]:
+    obs = normalize_obstacle(item)
+    if obs["type"] != "rect":
+        raise ValueError("rect_smooth_barrier_geometry requires a rect obstacle")
+
+    point = _vec2(point, "point")
+    center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
+    half_extents = np.asarray(obs["half_extents"], dtype=np.float32).reshape(2)
+    yaw = float(obs.get("yaw", 0.0))
+    tau = float(max(1e-4, tau))
+    inflation_margin = float(max(0.0, inflation_margin))
+    inflated = (half_extents + inflation_margin).astype(np.float32)
+
+    local = _transform_to_local(point, center, yaw).astype(np.float32)
+    face_scores = np.asarray(
+        [
+            float(local[0] - inflated[0]),
+            float(-local[0] - inflated[0]),
+            float(local[1] - inflated[1]),
+            float(-local[1] - inflated[1]),
+        ],
+        dtype=np.float32,
+    )
+    scaled = face_scores / tau
+    scaled -= float(np.max(scaled))
+    exp_scaled = np.exp(scaled, dtype=np.float32)
+    weights = exp_scaled / max(float(np.sum(exp_scaled)), 1e-8)
+
+    face_dirs = np.asarray(
+        [
+            [1.0, 0.0],
+            [-1.0, 0.0],
+            [0.0, 1.0],
+            [0.0, -1.0],
+        ],
+        dtype=np.float32,
+    )
+    grad_local = (weights.reshape(4, 1) * face_dirs).sum(axis=0).astype(np.float32)
+    second_local = np.zeros((2, 2), dtype=np.float32)
+    for idx in range(4):
+        vec = face_dirs[idx].reshape(2, 1)
+        second_local += float(weights[idx]) * (vec @ vec.T).astype(np.float32)
+    hess_local = ((second_local - np.outer(grad_local, grad_local)) / tau).astype(np.float32)
+
+    rot = _rotation_matrix(yaw)
+    grad_world = (rot @ grad_local.reshape(2, 1)).reshape(2).astype(np.float32)
+    hess_world = (rot @ hess_local @ rot.T).astype(np.float32)
+
+    barrier_h = float(tau * (np.log(max(float(np.sum(exp_scaled)), 1e-8)) + float(np.max(face_scores / tau))))
+    dominant_face = int(np.argmax(face_scores))
+
+    closest_local = local.copy()
+    if dominant_face == 0:
+        closest_local[0] = inflated[0]
+        closest_local[1] = float(np.clip(local[1], -inflated[1], inflated[1]))
+    elif dominant_face == 1:
+        closest_local[0] = -inflated[0]
+        closest_local[1] = float(np.clip(local[1], -inflated[1], inflated[1]))
+    elif dominant_face == 2:
+        closest_local[1] = inflated[1]
+        closest_local[0] = float(np.clip(local[0], -inflated[0], inflated[0]))
+    else:
+        closest_local[1] = -inflated[1]
+        closest_local[0] = float(np.clip(local[0], -inflated[0], inflated[0]))
+    closest_world = _transform_to_world(closest_local.astype(np.float32), center, yaw)
+
+    return {
+        "type": "rect",
+        "barrier_h": barrier_h,
+        "barrier_grad": grad_world.astype(np.float32),
+        "barrier_hess": hess_world.astype(np.float32),
+        "point_local": local.astype(np.float32),
+        "effective_half_extents": inflated.astype(np.float32),
+        "face_scores": face_scores.astype(np.float32),
+        "face_weights": weights.astype(np.float32),
+        "dominant_face": dominant_face,
+        "closest_point": closest_world.astype(np.float32),
+        "closest_point_local": closest_local.astype(np.float32),
+    }
+
+
 def rect_corner_margin_geometry(
     item: Dict[str, Any],
     closest_point_local: np.ndarray,

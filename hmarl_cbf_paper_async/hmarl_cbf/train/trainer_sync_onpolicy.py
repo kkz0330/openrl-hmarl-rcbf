@@ -440,6 +440,7 @@ class TrainerSyncOnPolicy:
             rect_corner_alignment_power=float(overrides.get("rect_corner_alignment_power", 1.0)),
             rect_dual_edge_cbf_enabled=bool(overrides.get("rect_dual_edge_cbf_enabled", False)),
             rect_dual_edge_proximity_distance=float(overrides.get("rect_dual_edge_proximity_distance", 0.0)),
+            rect_smooth_tau=float(overrides.get("rect_smooth_tau", 0.1)),
             u_min=u_min,
             u_max=u_max,
         )
@@ -611,6 +612,7 @@ class TrainerSyncOnPolicy:
             rect_corner_alignment_power=float(overrides.get("rect_corner_alignment_power", 1.0)),
             rect_dual_edge_cbf_enabled=bool(overrides.get("rect_dual_edge_cbf_enabled", False)),
             rect_dual_edge_proximity_distance=float(overrides.get("rect_dual_edge_proximity_distance", 0.0)),
+            rect_smooth_tau=float(overrides.get("rect_smooth_tau", 0.1)),
             u_min=u_min,
             u_max=u_max,
         )

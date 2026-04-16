@@ -70,6 +70,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         rect_corner_alignment_power: float = 1.0,
         rect_dual_edge_cbf_enabled: bool = False,
         rect_dual_edge_proximity_distance: float = 0.0,
+        rect_smooth_tau: float = 0.1,
     ) -> None:
         if n_agents <= 0:
             raise ValueError("n_agents must be positive")
@@ -110,6 +111,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         self.rect_corner_alignment_power = float(max(0.25, rect_corner_alignment_power))
         self.rect_dual_edge_cbf_enabled = bool(rect_dual_edge_cbf_enabled)
         self.rect_dual_edge_proximity_distance = float(max(0.0, rect_dual_edge_proximity_distance))
+        self.rect_smooth_tau = float(max(1e-4, rect_smooth_tau))
         if self.obstacle_circle_radius_min <= 0.0 or self.obstacle_circle_radius_max < self.obstacle_circle_radius_min:
             raise ValueError("invalid circle obstacle radius range")
         if self.obstacle_rect_half_extent_min <= 0.0 or self.obstacle_rect_half_extent_max < self.obstacle_rect_half_extent_min:

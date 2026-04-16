@@ -26,7 +26,7 @@ env:
   reward_collision_penalty: 3.0
   reward_oob_penalty: 2.5
   initial_speed_toward_goal: 0.0
-  obstacle_rect_prob: 0.35
+  obstacle_rect_prob: 1.0
   obstacle_circle_radius_min: 0.4
   obstacle_circle_radius_max: 4.0
   obstacle_rect_half_extent_min: 0.45

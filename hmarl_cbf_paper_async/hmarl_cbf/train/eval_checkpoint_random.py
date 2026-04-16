@@ -395,6 +395,15 @@ def _build_eval_trainer(cfg: Dict[str, Any], deterministic: bool) -> TrainerSync
     skill_params["boundary_margin"] = float(
         cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.2))
     )
+    skill_params["rect_base_margin_extra"] = float(cfg["env"].get("rect_base_margin_extra", 0.0))
+    skill_params["rect_corner_margin_enabled"] = bool(cfg["env"].get("rect_corner_margin_enabled", False))
+    skill_params["rect_corner_margin_max"] = float(cfg["env"].get("rect_corner_margin_max", 0.0))
+    skill_params["rect_corner_proximity_distance"] = float(cfg["env"].get("rect_corner_proximity_distance", 0.4))
+    skill_params["rect_corner_speed_min"] = float(cfg["env"].get("rect_corner_speed_min", 0.05))
+    skill_params["rect_corner_alignment_power"] = float(cfg["env"].get("rect_corner_alignment_power", 1.0))
+    skill_params["rect_dual_edge_cbf_enabled"] = bool(cfg["env"].get("rect_dual_edge_cbf_enabled", False))
+    skill_params["rect_dual_edge_proximity_distance"] = float(cfg["env"].get("rect_dual_edge_proximity_distance", 0.0))
+    skill_params["rect_smooth_tau"] = float(cfg["env"].get("rect_smooth_tau", 0.1))
     runtime = SkillRuntimeManager(skills, default_ctx=skill_params)
     low_controller = LowLevelSafeController(
         low_policy=low_policy,

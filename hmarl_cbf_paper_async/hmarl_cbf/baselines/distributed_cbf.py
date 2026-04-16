@@ -43,6 +43,7 @@ class DistributedCBFBaselineConfig:
     rect_corner_alignment_power: float = 1.0
     rect_dual_edge_cbf_enabled: bool = False
     rect_dual_edge_proximity_distance: float = 0.0
+    rect_smooth_tau: float = 0.1
     use_input_bounds: bool = True
     unbounded_action_limit: float = 1e6
 
@@ -84,6 +85,7 @@ class DistributedCBFBaselineConfig:
             rect_corner_alignment_power=float(data.get("rect_corner_alignment_power", 1.0)),
             rect_dual_edge_cbf_enabled=bool(data.get("rect_dual_edge_cbf_enabled", False)),
             rect_dual_edge_proximity_distance=float(data.get("rect_dual_edge_proximity_distance", 0.0)),
+            rect_smooth_tau=float(data.get("rect_smooth_tau", 0.1)),
             use_input_bounds=bool(data.get("use_input_bounds", True)),
             unbounded_action_limit=float(data.get("unbounded_action_limit", 1e6)),
         )
@@ -214,6 +216,7 @@ class DistributedCBFBaselineController:
                 "rect_corner_alignment_power": float(self.config.rect_corner_alignment_power),
                 "rect_dual_edge_cbf_enabled": bool(self.config.rect_dual_edge_cbf_enabled),
                 "rect_dual_edge_proximity_distance": float(self.config.rect_dual_edge_proximity_distance),
+                "rect_smooth_tau": float(self.config.rect_smooth_tau),
                 "w_cbf": float(self.config.w_cbf),
                 "cbf_slack_max": float(self.config.cbf_slack_max),
             }

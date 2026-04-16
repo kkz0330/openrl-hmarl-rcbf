@@ -19,66 +19,18 @@ except ImportError:  # pragma: no cover - optional backend
     torch = None  # type: ignore[assignment]
     Tensor = object  # type: ignore[misc, assignment]
 
-from hmarl_cbf.env.obstacles import obstacle_cbf_geometries, normalize_obstacle, rect_corner_margin_geometry
+from hmarl_cbf.env.obstacles import normalize_obstacle, rect_smooth_barrier_geometry
 from hmarl_cbf.types import AgentState, QPParam
 
 SPD_EPS = 1e-5
-
-
-def _rect_corner_extra_margin(
-    state_i: AgentState,
-    obs_norm: Dict[str, Any],
-    geom: Dict[str, Any],
-    *,
-    enabled: bool,
-    margin_max: float,
-    threshold: float,
-    speed_min: float,
-    alignment_power: float,
-) -> float:
-    if str(obs_norm.get("type", "")).strip().lower() != "rect":
-        return 0.0
-    if not enabled:
-        return 0.0
-    margin_max = float(max(0.0, margin_max))
-    if margin_max <= 0.0:
-        return 0.0
-    threshold = float(max(1e-6, threshold))
-    corner_geom = rect_corner_margin_geometry(
-        obs_norm,
-        geom.get("closest_point_local", geom["closest_point"]),
-        threshold=threshold,
-    )
-    corner_proximity = float(corner_geom["corner_proximity"])
-    if corner_proximity <= 0.0:
-        return 0.0
-
-    vel = np.asarray(state_i.velocity, dtype=np.float32).reshape(2)
-    speed = float(np.linalg.norm(vel))
-    speed_min = float(max(0.0, speed_min))
-    if speed <= speed_min:
-        return 0.0
-
-    pos = np.asarray(state_i.position, dtype=np.float32).reshape(2)
-    nearest_corner = np.asarray(corner_geom["nearest_corner"], dtype=np.float32).reshape(2)
-    to_corner = nearest_corner - pos
-    dist = float(np.linalg.norm(to_corner))
-    if dist <= 1e-8:
-        alignment = 1.0
-    else:
-        alignment = max(0.0, float(np.dot(vel / speed, to_corner / dist)))
-    if alignment <= 0.0:
-        return 0.0
-    alignment_power = float(max(0.25, alignment_power))
-    return float(margin_max * corner_proximity * (alignment**alignment_power))
 
 
 def _rect_base_extra_margin(rect_base_margin_extra: float) -> float:
     return float(max(0.0, rect_base_margin_extra))
 
 
-def _rect_dual_edge_proximity_distance(rect_dual_edge_proximity_distance: float, rect_corner_proximity_distance: float) -> float:
-    return float(max(1e-6, rect_dual_edge_proximity_distance if rect_dual_edge_proximity_distance > 0.0 else rect_corner_proximity_distance))
+def _rect_smooth_tau(rect_smooth_tau: float) -> float:
+    return float(max(1e-4, rect_smooth_tau))
 
 
 @dataclass(slots=True)
@@ -92,8 +44,6 @@ class DiffConstraintConstants:
     cbf_hdot: Tensor
     cbf_h0: Tensor
     cbf_h0dot: Tensor
-    cbf_pv: Tensor
-    cbf_v2: Tensor
     cbf_resp: Tensor
     A_clf: Tensor
     clf_V: Tensor
@@ -222,8 +172,7 @@ class TorchDifferentiableQPSolver:
             alpha0 = cbf_k0 * hocbf_gamma_h
             alpha1 = cbf_k1 * hocbf_gamma_hdot
             h1 = constants.cbf_h0dot + alpha0 * constants.cbf_h0
-            lf_h1 = 2.0 * constants.cbf_v2 + 2.0 * alpha0 * constants.cbf_pv
-            b_cbf = constants.cbf_resp * (lf_h1 + alpha1 * h1)
+            b_cbf = constants.cbf_resp * (constants.cbf_const + alpha0 * constants.cbf_h0dot + alpha1 * h1)
         else:
             b_cbf = (
                 constants.cbf_const
@@ -325,6 +274,7 @@ def build_diff_constraint_constants(
     rect_corner_alignment_power: float = 1.0,
     rect_dual_edge_cbf_enabled: bool = False,
     rect_dual_edge_proximity_distance: float = 0.0,
+    rect_smooth_tau: float = 0.1,
     clf_v_des_speed: float = 0.8,
     u_min: np.ndarray | List[float] = (-1.0, -1.0),
     u_max: np.ndarray | List[float] = (1.0, 1.0),
@@ -344,8 +294,6 @@ def build_diff_constraint_constants(
     cbf_hdot_terms: List[Tensor] = []
     cbf_h0_terms: List[Tensor] = []
     cbf_h0dot_terms: List[Tensor] = []
-    cbf_pv_terms: List[Tensor] = []
-    cbf_v2_terms: List[Tensor] = []
     cbf_resp_terms: List[Tensor] = []
 
     for state_j in neighbors:
@@ -370,22 +318,17 @@ def build_diff_constraint_constants(
             cbf_hdot_terms.append(hdot_term)
             cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
             cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-            cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
-            cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
             cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
         elif cbf_mode == "distributed_gcbfplus":
             h0 = torch.dot(p_rel, p_rel) - torch.tensor(float(d_min_agent**2), dtype=dtype, device=dev)
-            pv = torch.dot(p_rel, v_rel)
-            h0_dot = 2.0 * pv
-            v2 = torch.dot(v_rel, v_rel)
+            h0_dot = 2.0 * torch.dot(p_rel, v_rel)
+            hddrift = 2.0 * torch.dot(v_rel, v_rel)
             A_rows.append(-2.0 * p_rel)
-            cbf_const_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_const_terms.append(hddrift)
             cbf_h_terms.append(torch.zeros((), dtype=dtype, device=dev))
             cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
             cbf_h0_terms.append(h0)
             cbf_h0dot_terms.append(h0_dot)
-            cbf_pv_terms.append(pv)
-            cbf_v2_terms.append(v2)
             cbf_resp_terms.append(torch.tensor(float(cbf_share_agent), dtype=dtype, device=dev))
         else:
             h = torch.dot(p_rel, p_rel) - torch.tensor(float(d_min_agent**2), dtype=dtype, device=dev)
@@ -397,8 +340,6 @@ def build_diff_constraint_constants(
             cbf_hdot_terms.append(h_dot)
             cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
             cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-            cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
-            cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
             cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
 
     for obs in obstacles:
@@ -424,22 +365,17 @@ def build_diff_constraint_constants(
                 cbf_hdot_terms.append(hdot_term)
                 cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
             elif cbf_mode == "distributed_gcbfplus":
                 h0 = torch.dot(p_rel, p_rel) - torch.tensor(float((radius + d_safe_obs) ** 2), dtype=dtype, device=dev)
-                pv = torch.dot(p_rel, v_i)
-                h0_dot = 2.0 * pv
-                v2 = torch.dot(v_i, v_i)
+                h0_dot = 2.0 * torch.dot(p_rel, v_i)
+                hddrift = 2.0 * torch.dot(v_i, v_i)
                 A_rows.append(-2.0 * p_rel)
-                cbf_const_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_const_terms.append(hddrift)
                 cbf_h_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_h0_terms.append(h0)
                 cbf_h0dot_terms.append(h0_dot)
-                cbf_pv_terms.append(pv)
-                cbf_v2_terms.append(v2)
                 cbf_resp_terms.append(torch.tensor(float(cbf_share_obs), dtype=dtype, device=dev))
             else:
                 h = torch.dot(p_rel, p_rel) - torch.tensor(float((radius + d_safe_obs) ** 2), dtype=dtype, device=dev)
@@ -451,62 +387,35 @@ def build_diff_constraint_constants(
                 cbf_hdot_terms.append(h_dot)
                 cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
         else:
-            rect_geoms = obstacle_cbf_geometries(
+            rect_geom = rect_smooth_barrier_geometry(
                 state_i.position,
                 obs_norm,
-                rect_dual_edge_enabled=bool(rect_dual_edge_cbf_enabled),
-                rect_dual_edge_proximity_distance=_rect_dual_edge_proximity_distance(
-                    float(rect_dual_edge_proximity_distance),
-                    float(rect_corner_proximity_distance),
-                ),
+                inflation_margin=d_safe_obs + _rect_base_extra_margin(rect_base_margin_extra),
+                tau=_rect_smooth_tau(float(rect_smooth_tau)),
             )
-            for geom in rect_geoms:
-                offset_np = np.asarray(geom["offset"], dtype=np.float32).reshape(2)
-                offset = torch.tensor(offset_np, dtype=dtype, device=dev)
-                sign = float(geom["sign"])
-                d_safe_obs_eff = d_safe_obs + _rect_base_extra_margin(rect_base_margin_extra)
-                if str(geom.get("face_role", "primary")).strip().lower() != "secondary":
-                    d_safe_obs_eff += _rect_corner_extra_margin(
-                        state_i=state_i,
-                        obs_norm=obs_norm,
-                        geom=geom,
-                        enabled=rect_corner_margin_enabled,
-                        margin_max=rect_corner_margin_max,
-                        threshold=rect_corner_proximity_distance,
-                        speed_min=rect_corner_speed_min,
-                        alignment_power=rect_corner_alignment_power,
-                    )
-                if cbf_mode == "distributed_gcbfplus":
-                    h0 = sign * torch.dot(offset, offset) - torch.tensor(float(d_safe_obs_eff**2), dtype=dtype, device=dev)
-                    pv = torch.dot(offset, v_i)
-                    h0_dot = 2.0 * sign * pv
-                    v2 = torch.dot(v_i, v_i)
-                    A_rows.append(-2.0 * sign * offset)
-                    cbf_const_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                    cbf_h_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                    cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                    cbf_h0_terms.append(h0)
-                    cbf_h0dot_terms.append(h0_dot)
-                    cbf_pv_terms.append(pv)
-                    cbf_v2_terms.append(sign * v2)
-                    cbf_resp_terms.append(torch.tensor(float(cbf_share_obs), dtype=dtype, device=dev))
-                else:
-                    h = sign * torch.dot(offset, offset) - torch.tensor(float(d_safe_obs_eff**2), dtype=dtype, device=dev)
-                    h_dot = 2.0 * sign * torch.dot(offset, v_i)
-                    cbf_const = 2.0 * sign * torch.dot(v_i, v_i)
-                    A_rows.append(-2.0 * sign * offset)
-                    cbf_const_terms.append(cbf_const)
-                    cbf_h_terms.append(h)
-                    cbf_hdot_terms.append(h_dot)
-                    cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                    cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                    cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                    cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                    cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
+            grad = torch.tensor(np.asarray(rect_geom["barrier_grad"], dtype=np.float32).reshape(2), dtype=dtype, device=dev)
+            hess = torch.tensor(np.asarray(rect_geom["barrier_hess"], dtype=np.float32).reshape(2, 2), dtype=dtype, device=dev)
+            h_val = torch.tensor(float(rect_geom["barrier_h"]), dtype=dtype, device=dev)
+            h_dot = torch.dot(grad, v_i)
+            hddrift = torch.dot(v_i, hess @ v_i)
+            if cbf_mode == "distributed_gcbfplus":
+                A_rows.append(-grad)
+                cbf_const_terms.append(hddrift)
+                cbf_h_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_h0_terms.append(h_val)
+                cbf_h0dot_terms.append(h_dot)
+                cbf_resp_terms.append(torch.tensor(float(cbf_share_obs), dtype=dtype, device=dev))
+            else:
+                A_rows.append(-grad)
+                cbf_const_terms.append(hddrift)
+                cbf_h_terms.append(h_val)
+                cbf_hdot_terms.append(h_dot)
+                cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+                cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
 
     if boundary_cbf and world_size > 0.0:
         xmin = float(-world_size + boundary_margin)
@@ -539,8 +448,6 @@ def build_diff_constraint_constants(
                 cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_h0_terms.append(h0)
                 cbf_h0dot_terms.append(h0_dot)
-                cbf_pv_terms.append(0.5 * h0_dot)
-                cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
             else:
                 A_rows.append(a_row)
@@ -549,8 +456,6 @@ def build_diff_constraint_constants(
                 cbf_hdot_terms.append(h0_dot)
                 cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_pv_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_v2_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
 
     if len(A_rows) == 0:
@@ -560,8 +465,6 @@ def build_diff_constraint_constants(
         cbf_hdot = torch.zeros((1,), dtype=dtype, device=dev)
         cbf_h0 = torch.zeros((1,), dtype=dtype, device=dev)
         cbf_h0dot = torch.zeros((1,), dtype=dtype, device=dev)
-        cbf_pv = torch.zeros((1,), dtype=dtype, device=dev)
-        cbf_v2 = torch.zeros((1,), dtype=dtype, device=dev)
         cbf_resp = torch.ones((1,), dtype=dtype, device=dev)
     else:
         A_cbf = torch.stack(A_rows, dim=0).to(dtype=dtype, device=dev)
@@ -570,8 +473,6 @@ def build_diff_constraint_constants(
         cbf_hdot = torch.stack(cbf_hdot_terms, dim=0).to(dtype=dtype, device=dev)
         cbf_h0 = torch.stack(cbf_h0_terms, dim=0).to(dtype=dtype, device=dev)
         cbf_h0dot = torch.stack(cbf_h0dot_terms, dim=0).to(dtype=dtype, device=dev)
-        cbf_pv = torch.stack(cbf_pv_terms, dim=0).to(dtype=dtype, device=dev)
-        cbf_v2 = torch.stack(cbf_v2_terms, dim=0).to(dtype=dtype, device=dev)
         cbf_resp = torch.stack(cbf_resp_terms, dim=0).to(dtype=dtype, device=dev)
 
     goal = torch.tensor(state_i.goal, dtype=dtype, device=dev)
@@ -601,8 +502,6 @@ def build_diff_constraint_constants(
         cbf_hdot=cbf_hdot,
         cbf_h0=cbf_h0,
         cbf_h0dot=cbf_h0dot,
-        cbf_pv=cbf_pv,
-        cbf_v2=cbf_v2,
         cbf_resp=cbf_resp,
         A_clf=A_clf,
         clf_V=clf_V,

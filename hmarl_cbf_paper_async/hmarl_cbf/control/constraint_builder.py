@@ -4,63 +4,16 @@ from typing import Any, Dict, List
 
 import numpy as np
 
-from hmarl_cbf.env.obstacles import obstacle_cbf_geometries, normalize_obstacle, rect_corner_margin_geometry
+from hmarl_cbf.env.obstacles import normalize_obstacle, rect_smooth_barrier_geometry
 from hmarl_cbf.types import AgentState, QPParam, QPProblem
-
-
-def _rect_corner_extra_margin(
-    state_i: AgentState,
-    obs_norm: Dict[str, Any],
-    geom: Dict[str, Any],
-    overrides: Dict[str, Any],
-) -> float:
-    if str(obs_norm.get("type", "")).strip().lower() != "rect":
-        return 0.0
-    if not bool(overrides.get("rect_corner_margin_enabled", False)):
-        return 0.0
-    margin_max = float(max(0.0, overrides.get("rect_corner_margin_max", 0.0)))
-    if margin_max <= 0.0:
-        return 0.0
-    threshold = float(max(1e-6, overrides.get("rect_corner_proximity_distance", 0.4)))
-    corner_geom = rect_corner_margin_geometry(
-        obs_norm,
-        geom.get("closest_point_local", geom["closest_point"]),
-        threshold=threshold,
-    )
-    corner_proximity = float(corner_geom["corner_proximity"])
-    if corner_proximity <= 0.0:
-        return 0.0
-
-    vel = np.asarray(state_i.velocity, dtype=np.float32).reshape(2)
-    speed = float(np.linalg.norm(vel))
-    speed_min = float(max(0.0, overrides.get("rect_corner_speed_min", 0.05)))
-    if speed <= speed_min:
-        return 0.0
-
-    pos = np.asarray(state_i.position, dtype=np.float32).reshape(2)
-    nearest_corner = np.asarray(corner_geom["nearest_corner"], dtype=np.float32).reshape(2)
-    to_corner = nearest_corner - pos
-    dist = float(np.linalg.norm(to_corner))
-    if dist <= 1e-8:
-        alignment = 1.0
-    else:
-        alignment = max(0.0, float(np.dot(vel / speed, to_corner / dist)))
-    if alignment <= 0.0:
-        return 0.0
-    alignment_power = float(max(0.25, overrides.get("rect_corner_alignment_power", 1.0)))
-    return float(margin_max * corner_proximity * (alignment**alignment_power))
 
 
 def _rect_base_extra_margin(overrides: Dict[str, Any]) -> float:
     return float(max(0.0, overrides.get("rect_base_margin_extra", 0.0)))
 
 
-def _rect_dual_edge_enabled(overrides: Dict[str, Any]) -> bool:
-    return bool(overrides.get("rect_dual_edge_cbf_enabled", False))
-
-
-def _rect_dual_edge_proximity_distance(overrides: Dict[str, Any]) -> float:
-    return float(max(1e-6, overrides.get("rect_dual_edge_proximity_distance", overrides.get("rect_corner_proximity_distance", 0.4))))
+def _rect_smooth_tau(overrides: Dict[str, Any]) -> float:
+    return float(max(1e-4, overrides.get("rect_smooth_tau", 0.1)))
 
 
 class ConstraintBuilder:
@@ -200,43 +153,29 @@ class ConstraintBuilder:
                     a_row = (-2.0 * p_rel).astype(np.float32)
             else:
                 vel = np.asarray(state_i.velocity, dtype=np.float32).reshape(2)
-                rect_geoms = obstacle_cbf_geometries(
+                rect_geom = rect_smooth_barrier_geometry(
                     state_i.position,
                     obs_norm,
-                    rect_dual_edge_enabled=_rect_dual_edge_enabled(overrides),
-                    rect_dual_edge_proximity_distance=_rect_dual_edge_proximity_distance(overrides),
+                    inflation_margin=d_safe_obs + _rect_base_extra_margin(overrides),
+                    tau=_rect_smooth_tau(overrides),
                 )
-                for geom in rect_geoms:
-                    offset = np.asarray(geom["offset"], dtype=np.float32).reshape(2)
-                    sign = float(geom["sign"])
-                    d_safe_obs_eff = d_safe_obs + _rect_base_extra_margin(overrides)
-                    if str(geom.get("face_role", "primary")).strip().lower() != "secondary":
-                        d_safe_obs_eff += _rect_corner_extra_margin(
-                            state_i=state_i,
-                            obs_norm=obs_norm,
-                            geom=geom,
-                            overrides=overrides,
-                        )
-                    if cbf_mode == "distributed_gcbfplus":
-                        h0 = float(sign * np.dot(offset, offset) - d_safe_obs_eff**2)
-                        pv = float(np.dot(offset, vel))
-                        h0_dot = 2.0 * sign * pv
-                        alpha0 = k0 * hocbf_gamma_h
-                        alpha1 = k1 * hocbf_gamma_hdot
-                        h1 = h0_dot + alpha0 * h0
-                        lf_h1 = 2.0 * sign * float(np.dot(vel, vel)) + 2.0 * alpha0 * sign * pv
-                        a_row = (-2.0 * sign * offset).astype(np.float32)
-                        b_row = cbf_share_obs * (lf_h1 + alpha1 * h1)
-                        A_cbf_rows.append(a_row)
-                        b_cbf_rows.append(float(b_row))
-                        continue
-                    h_term = float(sign * np.dot(offset, offset) - d_safe_obs_eff**2)
-                    hdot_term = float(2.0 * sign * np.dot(offset, vel))
-                    const_term = 2.0 * sign * float(np.dot(vel, vel))
-                    a_row = (-2.0 * sign * offset).astype(np.float32)
-                    b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
+                grad = np.asarray(rect_geom["barrier_grad"], dtype=np.float32).reshape(2)
+                hess = np.asarray(rect_geom["barrier_hess"], dtype=np.float32).reshape(2, 2)
+                h_term = float(rect_geom["barrier_h"])
+                hdot_term = float(np.dot(grad, vel))
+                const_term = float(vel @ hess @ vel)
+                a_row = (-grad).astype(np.float32)
+                if cbf_mode == "distributed_gcbfplus":
+                    alpha0 = k0 * hocbf_gamma_h
+                    alpha1 = k1 * hocbf_gamma_hdot
+                    h1 = hdot_term + alpha0 * h_term
+                    b_row = cbf_share_obs * (const_term + alpha0 * hdot_term + alpha1 * h1)
                     A_cbf_rows.append(a_row)
                     b_cbf_rows.append(float(b_row))
+                    continue
+                b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
+                A_cbf_rows.append(a_row)
+                b_cbf_rows.append(float(b_row))
                 continue
             b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
             A_cbf_rows.append(a_row)
