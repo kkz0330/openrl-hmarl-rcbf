@@ -172,6 +172,12 @@ def _safety_constraints_common(_: AgentState, ctx: Dict[str, Any]) -> Dict[str, 
         "use_input_bounds": bool(ctx.get("use_input_bounds", True)),
         "slow_radius": float(ctx.get("slow_radius", 1.5)),
         "goal_stop_min_speed": float(ctx.get("goal_stop_min_speed", 0.0)),
+        "rect_base_margin_extra": float(ctx.get("rect_base_margin_extra", 0.0)),
+        "rect_corner_margin_enabled": bool(ctx.get("rect_corner_margin_enabled", False)),
+        "rect_corner_margin_max": float(ctx.get("rect_corner_margin_max", 0.0)),
+        "rect_corner_proximity_distance": float(ctx.get("rect_corner_proximity_distance", 0.4)),
+        "rect_corner_speed_min": float(ctx.get("rect_corner_speed_min", 0.05)),
+        "rect_corner_alignment_power": float(ctx.get("rect_corner_alignment_power", 1.0)),
     }
 
 

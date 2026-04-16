@@ -4,6 +4,7 @@ from typing import Dict, List
 
 import numpy as np
 
+from hmarl_cbf.env.obstacles import ray_obstacle_distance
 from hmarl_cbf.types import LidarScan
 
 
@@ -19,30 +20,6 @@ class LidarModel:
         self.max_range = max_range
         self.noise_std = noise_std
         self._angles = np.linspace(0.0, 2.0 * np.pi, n_beam, endpoint=False, dtype=np.float32)
-
-    @staticmethod
-    def _ray_circle_distance(
-        origin: np.ndarray,
-        direction: np.ndarray,
-        center: np.ndarray,
-        radius: float,
-        max_range: float,
-    ) -> float:
-        rel = center - origin
-        proj = float(np.dot(rel, direction))
-        if proj < 0.0:
-            return max_range
-        closest_sq = float(np.dot(rel, rel) - proj * proj)
-        r_sq = float(radius * radius)
-        if closest_sq > r_sq:
-            return max_range
-        thc = float(np.sqrt(max(r_sq - closest_sq, 0.0)))
-        t_hit = proj - thc
-        if t_hit < 0.0:
-            t_hit = proj + thc
-        if t_hit < 0.0 or t_hit > max_range:
-            return max_range
-        return t_hit
 
     def scan(
         self,
@@ -61,9 +38,7 @@ class LidarModel:
             direction = np.asarray([np.cos(angle), np.sin(angle)], dtype=np.float32)
             best = self.max_range
             for item in combined:
-                center = np.asarray(item["center"], dtype=np.float32).reshape(2)
-                radius = float(item["radius"])
-                dist = self._ray_circle_distance(origin, direction, center, radius, self.max_range)
+                dist = ray_obstacle_distance(origin=origin, direction=direction, item=item, max_range=self.max_range)
                 if dist < best:
                     best = dist
             ranges[i] = best

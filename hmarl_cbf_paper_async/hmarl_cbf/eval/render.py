@@ -9,10 +9,14 @@ import numpy as np
 try:
     import matplotlib.pyplot as plt
     from matplotlib.animation import FuncAnimation, PillowWriter
+    from matplotlib.patches import Polygon
 except ImportError:  # pragma: no cover - optional backend
     plt = None  # type: ignore[assignment]
     FuncAnimation = None  # type: ignore[assignment]
     PillowWriter = None  # type: ignore[assignment]
+    Polygon = None  # type: ignore[assignment]
+
+from hmarl_cbf.env.obstacles import normalize_obstacle, obstacle_corners
 
 
 @dataclass(slots=True)
@@ -50,10 +54,14 @@ class TrajectoryRenderer:
         ax.set_title(f"Trajectory (T={t}, N={n})")
 
         for obs in trace.obstacles:
-            center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
-            radius = float(obs["radius"])
-            circle = plt.Circle((float(center[0]), float(center[1])), radius, color="gray", alpha=0.35)
-            ax.add_patch(circle)
+            obs_norm = normalize_obstacle(obs)
+            center = np.asarray(obs_norm["center"], dtype=np.float32).reshape(2)
+            if obs_norm["type"] in ("circle", "point"):
+                radius = float(obs_norm["radius"])
+                patch = plt.Circle((float(center[0]), float(center[1])), radius, color="gray", alpha=0.35)
+            else:
+                patch = Polygon(obstacle_corners(obs_norm), closed=True, color="gray", alpha=0.35)
+            ax.add_patch(patch)
 
         cmap = plt.get_cmap("tab10")
         for i in range(n):
@@ -92,10 +100,14 @@ class TrajectoryRenderer:
         ax.set_title("Episode Animation")
 
         for obs in trace.obstacles:
-            center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
-            radius = float(obs["radius"])
-            circle = plt.Circle((float(center[0]), float(center[1])), radius, color="gray", alpha=0.35)
-            ax.add_patch(circle)
+            obs_norm = normalize_obstacle(obs)
+            center = np.asarray(obs_norm["center"], dtype=np.float32).reshape(2)
+            if obs_norm["type"] in ("circle", "point"):
+                radius = float(obs_norm["radius"])
+                patch = plt.Circle((float(center[0]), float(center[1])), radius, color="gray", alpha=0.35)
+            else:
+                patch = Polygon(obstacle_corners(obs_norm), closed=True, color="gray", alpha=0.35)
+            ax.add_patch(patch)
 
         cmap = plt.get_cmap("tab10")
         trails = []

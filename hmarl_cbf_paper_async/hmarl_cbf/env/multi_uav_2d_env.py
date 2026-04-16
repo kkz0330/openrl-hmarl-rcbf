@@ -12,6 +12,13 @@ except ImportError:  # pragma: no cover - import-safe fallback
     spaces = None  # type: ignore[assignment]
 
 from hmarl_cbf.env.lidar import LidarModel
+from hmarl_cbf.env.obstacles import (
+    copy_obstacle,
+    disk_collides_with_obstacle,
+    normalize_obstacles,
+    obstacle_obstacle_clearance,
+    obstacle_surface_distance,
+)
 from hmarl_cbf.env.observation import ObservationBuilder
 from hmarl_cbf.types import AgentState, SafetyMetrics
 
@@ -48,6 +55,19 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         reward_collision_penalty: float = 1.0,
         reward_oob_penalty: float = 1.0,
         initial_speed_toward_goal: float = 0.0,
+        obstacle_rect_prob: float = 0.0,
+        obstacle_circle_radius_min: float = 0.4,
+        obstacle_circle_radius_max: float = 1.0,
+        obstacle_rect_half_extent_min: float = 0.4,
+        obstacle_rect_half_extent_max: float = 1.0,
+        obstacle_rect_yaw_max: float = 0.0,
+        obstacle_allow_outside_world: bool = False,
+        rect_base_margin_extra: float = 0.0,
+        rect_corner_margin_enabled: bool = False,
+        rect_corner_margin_max: float = 0.0,
+        rect_corner_proximity_distance: float = 0.4,
+        rect_corner_speed_min: float = 0.05,
+        rect_corner_alignment_power: float = 1.0,
     ) -> None:
         if n_agents <= 0:
             raise ValueError("n_agents must be positive")
@@ -73,6 +93,23 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         self.reward_collision_penalty = float(reward_collision_penalty)
         self.reward_oob_penalty = float(reward_oob_penalty)
         self.initial_speed_toward_goal = float(max(0.0, initial_speed_toward_goal))
+        self.obstacle_rect_prob = float(np.clip(obstacle_rect_prob, 0.0, 1.0))
+        self.obstacle_circle_radius_min = float(obstacle_circle_radius_min)
+        self.obstacle_circle_radius_max = float(obstacle_circle_radius_max)
+        self.obstacle_rect_half_extent_min = float(obstacle_rect_half_extent_min)
+        self.obstacle_rect_half_extent_max = float(obstacle_rect_half_extent_max)
+        self.obstacle_rect_yaw_max = float(max(0.0, obstacle_rect_yaw_max))
+        self.obstacle_allow_outside_world = bool(obstacle_allow_outside_world)
+        self.rect_base_margin_extra = float(max(0.0, rect_base_margin_extra))
+        self.rect_corner_margin_enabled = bool(rect_corner_margin_enabled)
+        self.rect_corner_margin_max = float(max(0.0, rect_corner_margin_max))
+        self.rect_corner_proximity_distance = float(max(1e-6, rect_corner_proximity_distance))
+        self.rect_corner_speed_min = float(max(0.0, rect_corner_speed_min))
+        self.rect_corner_alignment_power = float(max(0.25, rect_corner_alignment_power))
+        if self.obstacle_circle_radius_min <= 0.0 or self.obstacle_circle_radius_max < self.obstacle_circle_radius_min:
+            raise ValueError("invalid circle obstacle radius range")
+        if self.obstacle_rect_half_extent_min <= 0.0 or self.obstacle_rect_half_extent_max < self.obstacle_rect_half_extent_min:
+            raise ValueError("invalid rect obstacle half-extent range")
         self.step_count = 0
         self._rng = np.random.default_rng()
 
@@ -103,14 +140,32 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         for _ in range(self.n_obstacles):
             placed = False
             for _attempt in range(300):
-                center = self._sample_point(rng, margin=1.0)
-                radius = float(rng.uniform(0.4, 1.0))
+                if float(rng.uniform()) < self.obstacle_rect_prob:
+                    half_extents = rng.uniform(
+                        self.obstacle_rect_half_extent_min,
+                        self.obstacle_rect_half_extent_max,
+                        size=(2,),
+                    ).astype(np.float32)
+                    margin = 0.0 if self.obstacle_allow_outside_world else float(max(1.0, np.max(half_extents) + 0.2))
+                    center = self._sample_point(rng, margin=margin)
+                    candidate: Dict[str, np.ndarray | float] = {
+                        "type": "rect",
+                        "center": center,
+                        "half_extents": half_extents,
+                        "yaw": float(rng.uniform(-self.obstacle_rect_yaw_max, self.obstacle_rect_yaw_max))
+                        if self.obstacle_rect_yaw_max > 0.0
+                        else 0.0,
+                    }
+                else:
+                    radius = float(rng.uniform(self.obstacle_circle_radius_min, self.obstacle_circle_radius_max))
+                    margin = 0.0 if self.obstacle_allow_outside_world else max(1.0, radius + 0.2)
+                    center = self._sample_point(rng, margin=margin)
+                    candidate = {"type": "circle", "center": center, "radius": radius}
                 if all(
-                    np.linalg.norm(center - np.asarray(item["center"], dtype=np.float32))
-                    > (radius + float(item["radius"]) + self.agent_radius)
+                    obstacle_obstacle_clearance(candidate, item) > self.agent_radius
                     for item in obstacles
                 ):
-                    obstacles.append({"center": center, "radius": radius})
+                    obstacles.append(candidate)
                     placed = True
                     break
             if not placed:
@@ -119,10 +174,8 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
 
     def _is_point_clear_of_obstacles(self, point: np.ndarray, obstacles: Sequence[Dict[str, np.ndarray | float]]) -> bool:
         for obs in obstacles:
-            center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
-            radius = float(obs["radius"])
-            clearance = radius + self.agent_radius + self.min_obstacle_clearance
-            if np.linalg.norm(point - center) <= clearance:
+            clearance = self.agent_radius + self.min_obstacle_clearance
+            if obstacle_surface_distance(point, obs) <= clearance:
                 return False
         return True
 
@@ -203,14 +256,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         return np.asarray(v0, dtype=np.float32).reshape(2)
 
     def _parse_obstacles_option(self, obstacles_option: Sequence[Dict[str, Any]]) -> List[Dict[str, np.ndarray | float]]:
-        parsed: List[Dict[str, np.ndarray | float]] = []
-        for item in obstacles_option:
-            center = np.asarray(item["center"], dtype=np.float32).reshape(2)
-            radius = float(item["radius"])
-            if radius <= 0:
-                raise ValueError("obstacle radius must be positive")
-            parsed.append({"center": center, "radius": radius})
-        return parsed
+        return normalize_obstacles(obstacles_option)
 
     def _out_of_bounds_flags(self) -> Dict[int, bool]:
         flags: Dict[int, bool] = {}
@@ -234,7 +280,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         ]
 
     def get_obstacles(self) -> List[Dict[str, np.ndarray | float]]:
-        return [{"center": np.asarray(o["center"], dtype=np.float32).copy(), "radius": float(o["radius"])} for o in self._obstacles]
+        return [copy_obstacle(o) for o in self._obstacles]
 
     def freeze_agents(self, agent_ids: Sequence[int]) -> None:
         for agent_id in agent_ids:
@@ -256,9 +302,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
                     flags[j] = True
         for i in range(self.n_agents):
             for obs in self._obstacles:
-                center = np.asarray(obs["center"], dtype=np.float32)
-                radius = float(obs["radius"])
-                if np.linalg.norm(self._states[i].position - center) <= (radius + self._states[i].radius):
+                if disk_collides_with_obstacle(self._states[i].position, self._states[i].radius, obs):
                     flags[i] = True
         return flags
 
@@ -298,12 +342,8 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
                 )
             h_obs = np.inf
             for obs in self._obstacles:
-                center = np.asarray(obs["center"], dtype=np.float32)
-                radius = float(obs["radius"])
-                h_obs = min(
-                    h_obs,
-                    float(np.dot(state.position - center, state.position - center) - (radius + self.agent_radius) ** 2),
-                )
+                clearance = obstacle_surface_distance(state.position, obs) - self.agent_radius
+                h_obs = min(h_obs, float(clearance))
             metrics[state.agent_id] = SafetyMetrics(
                 min_h_agent=float(h_agent if np.isfinite(h_agent) else 0.0),
                 min_h_obstacle=float(h_obs if np.isfinite(h_obs) else 0.0),

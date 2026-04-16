@@ -11,6 +11,7 @@ except ImportError:  # pragma: no cover - import-safe fallback
     torch = None  # type: ignore[assignment]
 
 from hmarl_cbf.control.constraint_builder import ConstraintBuilder
+from hmarl_cbf.env.obstacles import copy_obstacle, obstacle_surface_distance
 from hmarl_cbf.control.qp_solver import DifferentiableQPSolver
 from hmarl_cbf.types import AgentObsLow, AgentState, QPParam, QPProblem, QPSolution
 
@@ -134,11 +135,9 @@ class LowLevelSafeController:
         )
         perceived: list[Dict[str, np.ndarray | float]] = []
         for obs in obstacles:
-            center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
-            radius = float(obs["radius"])
-            surface_distance = float(np.linalg.norm(center - state_i.position) - radius)
+            surface_distance = float(obstacle_surface_distance(state_i.position, obs))
             if surface_distance <= max_range:
-                perceived.append(obs)
+                perceived.append(copy_obstacle(obs))
         return perceived
 
     def solve_for_agent(
@@ -181,10 +180,7 @@ class LowLevelSafeController:
                 for s in neighbors
             ],
             obstacles_used=[
-                {
-                    "center": np.asarray(o["center"], dtype=np.float32).reshape(2).copy(),
-                    "radius": float(o["radius"]),
-                }
+                copy_obstacle(o)
                 for o in obstacles
             ],
         )

@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Mapping, Tuple
 import numpy as np
 
 from hmarl_cbf.control import ConstraintBuilder, DifferentiableQPSolver
+from hmarl_cbf.env.obstacles import copy_obstacle, obstacle_surface_distance
 from hmarl_cbf.types import AgentState, QPParam, QPSolution
 
 
@@ -34,6 +35,12 @@ class DistributedCBFBaselineConfig:
     boundary_cbf: bool = True
     boundary_margin: float = 0.3
     world_size: float = 10.0
+    rect_base_margin_extra: float = 0.0
+    rect_corner_margin_enabled: bool = False
+    rect_corner_margin_max: float = 0.0
+    rect_corner_proximity_distance: float = 0.4
+    rect_corner_speed_min: float = 0.05
+    rect_corner_alignment_power: float = 1.0
     use_input_bounds: bool = True
     unbounded_action_limit: float = 1e6
 
@@ -67,6 +74,12 @@ class DistributedCBFBaselineConfig:
             boundary_cbf=bool(data.get("boundary_cbf", True)),
             boundary_margin=float(data.get("boundary_margin", 0.3)),
             world_size=float(data.get("world_size", 10.0)),
+            rect_base_margin_extra=float(data.get("rect_base_margin_extra", 0.0)),
+            rect_corner_margin_enabled=bool(data.get("rect_corner_margin_enabled", False)),
+            rect_corner_margin_max=float(data.get("rect_corner_margin_max", 0.0)),
+            rect_corner_proximity_distance=float(data.get("rect_corner_proximity_distance", 0.4)),
+            rect_corner_speed_min=float(data.get("rect_corner_speed_min", 0.05)),
+            rect_corner_alignment_power=float(data.get("rect_corner_alignment_power", 1.0)),
             use_input_bounds=bool(data.get("use_input_bounds", True)),
             unbounded_action_limit=float(data.get("unbounded_action_limit", 1e6)),
         )
@@ -143,11 +156,9 @@ class DistributedCBFBaselineController:
             return []
         local: List[Dict[str, np.ndarray | float]] = []
         for obs in obstacles_all:
-            center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
-            radius = float(obs["radius"])
-            surface_distance = float(np.linalg.norm(center - state_i.position) - radius)
+            surface_distance = float(obstacle_surface_distance(state_i.position, obs))
             if surface_distance <= max_range:
-                local.append({"center": center.copy(), "radius": radius})
+                local.append(copy_obstacle(obs))
         return local
 
     def _build_qp_param(self, state: AgentState) -> QPParam:
@@ -191,6 +202,12 @@ class DistributedCBFBaselineController:
                 "boundary_cbf": bool(self.config.boundary_cbf),
                 "boundary_margin": float(self.config.boundary_margin),
                 "world_size": float(self.config.world_size),
+                "rect_base_margin_extra": float(self.config.rect_base_margin_extra),
+                "rect_corner_margin_enabled": bool(self.config.rect_corner_margin_enabled),
+                "rect_corner_margin_max": float(self.config.rect_corner_margin_max),
+                "rect_corner_proximity_distance": float(self.config.rect_corner_proximity_distance),
+                "rect_corner_speed_min": float(self.config.rect_corner_speed_min),
+                "rect_corner_alignment_power": float(self.config.rect_corner_alignment_power),
                 "w_cbf": float(self.config.w_cbf),
                 "cbf_slack_max": float(self.config.cbf_slack_max),
             }

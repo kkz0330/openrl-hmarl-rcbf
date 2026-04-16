@@ -454,6 +454,12 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
             "boundary_cbf": cfg.get("safety", {}).get("boundary_cbf", True),
             "boundary_margin": cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.2)),
             "world_size": cfg["env"].get("world_size", 10.0),
+            "rect_base_margin_extra": cfg["env"].get("rect_base_margin_extra", 0.0),
+            "rect_corner_margin_enabled": cfg["env"].get("rect_corner_margin_enabled", False),
+            "rect_corner_margin_max": cfg["env"].get("rect_corner_margin_max", 0.0),
+            "rect_corner_proximity_distance": cfg["env"].get("rect_corner_proximity_distance", 0.4),
+            "rect_corner_speed_min": cfg["env"].get("rect_corner_speed_min", 0.05),
+            "rect_corner_alignment_power": cfg["env"].get("rect_corner_alignment_power", 1.0),
             "use_input_bounds": True,
         }
     )
@@ -471,6 +477,12 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
     skill_params["boundary_margin"] = float(
         cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.2))
     )
+    skill_params["rect_base_margin_extra"] = float(cfg["env"].get("rect_base_margin_extra", 0.0))
+    skill_params["rect_corner_margin_enabled"] = bool(cfg["env"].get("rect_corner_margin_enabled", False))
+    skill_params["rect_corner_margin_max"] = float(cfg["env"].get("rect_corner_margin_max", 0.0))
+    skill_params["rect_corner_proximity_distance"] = float(cfg["env"].get("rect_corner_proximity_distance", 0.4))
+    skill_params["rect_corner_speed_min"] = float(cfg["env"].get("rect_corner_speed_min", 0.05))
+    skill_params["rect_corner_alignment_power"] = float(cfg["env"].get("rect_corner_alignment_power", 1.0))
     runtime = SkillRuntimeManager(
         skills,
         default_ctx=skill_params,

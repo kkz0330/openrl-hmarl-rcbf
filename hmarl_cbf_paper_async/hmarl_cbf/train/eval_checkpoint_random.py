@@ -78,7 +78,7 @@ def _parse_args() -> argparse.Namespace:
         "--obstacles-json",
         type=str,
         default="",
-        help="Optional JSON array of circular obstacles. Use with --states-json for fixed scenes.",
+        help="Optional JSON array of obstacles. Supports circle/rect. Use with --states-json for fixed scenes.",
     )
     return parser.parse_args()
 
@@ -291,17 +291,7 @@ def _parse_obstacles(raw: str) -> List[Dict[str, Any]]:
     payload = json.loads(raw)
     if not isinstance(payload, list):
         raise ValueError("obstacles-json must be a JSON list")
-    obstacles: List[Dict[str, Any]] = []
-    for idx, item in enumerate(payload):
-        if not isinstance(item, dict):
-            raise ValueError(f"obstacle {idx} must be a JSON object")
-        obstacles.append(
-            {
-                "center": np.asarray(item["center"], dtype=np.float32).reshape(2),
-                "radius": float(item["radius"]),
-            }
-        )
-    return obstacles
+    return payload
 
 
 def _resolve_fixed_scene(args: argparse.Namespace, cfg: Dict[str, Any]) -> Tuple[List[Dict[str, Any]] | None, List[Dict[str, Any]] | None]:

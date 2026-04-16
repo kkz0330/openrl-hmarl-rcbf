@@ -20,6 +20,7 @@ from hmarl_cbf.control import (
     build_diff_constraint_constants,
 )
 from hmarl_cbf.baselines import DistributedCBFBaselineController
+from hmarl_cbf.env.obstacles import copy_obstacle, normalize_obstacle, obstacle_corners
 from hmarl_cbf.eval import EpisodeTrace, EvalEpisodeStats, TrajectoryRenderer, evaluate_summary
 from hmarl_cbf.high_level import OnPolicyMAPPO
 from hmarl_cbf.skills import SkillRuntimeManager
@@ -172,16 +173,29 @@ class TrainerSyncOnPolicy:
 
         intervals: List[tuple[float, float]] = []
         for obs in obstacles:
-            center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
-            radius = float(obs["radius"])
-            rel = center - pos
-            longitudinal = float(np.dot(rel, e_goal))
-            if longitudinal <= 0.0 or longitudinal > lookahead:
-                continue
-            lateral = float(np.dot(rel, e_perp))
-            inflated = float(radius + state.radius + safe_obs + extra_margin)
-            left = max(-lateral_window, lateral - inflated)
-            right = min(lateral_window, lateral + inflated)
+            obs_norm = normalize_obstacle(obs)
+            inflated = float(state.radius + safe_obs + extra_margin)
+            if obs_norm["type"] in ("circle", "point"):
+                center = np.asarray(obs_norm["center"], dtype=np.float32).reshape(2)
+                radius = float(obs_norm["radius"])
+                rel = center - pos
+                longitudinal = float(np.dot(rel, e_goal))
+                if longitudinal <= 0.0 or longitudinal > lookahead:
+                    continue
+                lateral = float(np.dot(rel, e_perp))
+                left = max(-lateral_window, lateral - (radius + inflated))
+                right = min(lateral_window, lateral + (radius + inflated))
+            else:
+                corners = obstacle_corners(obs_norm)
+                rel_corners = corners - pos.reshape(1, 2)
+                longitudinal_vals = rel_corners @ e_goal.reshape(2, 1)
+                lateral_vals = rel_corners @ e_perp.reshape(2, 1)
+                longitudinal_min = float(np.min(longitudinal_vals)) - inflated
+                longitudinal_max = float(np.max(longitudinal_vals)) + inflated
+                if longitudinal_max <= 0.0 or longitudinal_min > lookahead:
+                    continue
+                left = max(-lateral_window, float(np.min(lateral_vals)) - inflated)
+                right = min(lateral_window, float(np.max(lateral_vals)) + inflated)
             if right <= -lateral_window or left >= lateral_window:
                 continue
             intervals.append((left, right))
@@ -382,13 +396,7 @@ class TrainerSyncOnPolicy:
 
         obstacles: List[Dict[str, Any]] = []
         for item in list(info.get("perceived_obstacles", [])):
-            d = dict(item)
-            obstacles.append(
-                {
-                    "center": np.asarray(d["center"], dtype=np.float32).reshape(2),
-                    "radius": float(d["radius"]),
-                }
-            )
+            obstacles.append(copy_obstacle(dict(item)))
 
         safety_constraints = dict(info.get("safety_constraints", {}))
         return state, neighbors, obstacles, safety_constraints
@@ -424,6 +432,12 @@ class TrainerSyncOnPolicy:
             boundary_cbf=bool(overrides.get("boundary_cbf", False)),
             world_size=float(overrides.get("world_size", getattr(self.env, "world_size", 0.0))),
             boundary_margin=float(overrides.get("boundary_margin", 0.0)),
+            rect_corner_margin_enabled=bool(overrides.get("rect_corner_margin_enabled", False)),
+            rect_base_margin_extra=float(overrides.get("rect_base_margin_extra", 0.0)),
+            rect_corner_margin_max=float(overrides.get("rect_corner_margin_max", 0.0)),
+            rect_corner_proximity_distance=float(overrides.get("rect_corner_proximity_distance", 0.4)),
+            rect_corner_speed_min=float(overrides.get("rect_corner_speed_min", 0.05)),
+            rect_corner_alignment_power=float(overrides.get("rect_corner_alignment_power", 1.0)),
             u_min=u_min,
             u_max=u_max,
         )
@@ -873,10 +887,7 @@ class TrainerSyncOnPolicy:
                                 for s in control_outputs[aid].neighbors_used
                             ],
                             "perceived_obstacles": [
-                                {
-                                    "center": np.asarray(o["center"], dtype=np.float32).reshape(2).copy(),
-                                    "radius": float(o["radius"]),
-                                }
+                                copy_obstacle(o)
                                 for o in control_outputs[aid].obstacles_used
                             ],
                             "skill_u_ref": np.asarray(skill_out[aid].u_ref_skill, dtype=np.float32).reshape(2).copy(),
