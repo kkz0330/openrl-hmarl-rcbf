@@ -438,6 +438,8 @@ class TrainerSyncOnPolicy:
             rect_corner_proximity_distance=float(overrides.get("rect_corner_proximity_distance", 0.4)),
             rect_corner_speed_min=float(overrides.get("rect_corner_speed_min", 0.05)),
             rect_corner_alignment_power=float(overrides.get("rect_corner_alignment_power", 1.0)),
+            rect_dual_edge_cbf_enabled=bool(overrides.get("rect_dual_edge_cbf_enabled", False)),
+            rect_dual_edge_proximity_distance=float(overrides.get("rect_dual_edge_proximity_distance", 0.0)),
             u_min=u_min,
             u_max=u_max,
         )
@@ -601,6 +603,14 @@ class TrainerSyncOnPolicy:
             boundary_cbf=bool(overrides.get("boundary_cbf", False)),
             world_size=float(overrides.get("world_size", getattr(self.env, "world_size", 0.0))),
             boundary_margin=float(overrides.get("boundary_margin", 0.0)),
+            rect_corner_margin_enabled=bool(overrides.get("rect_corner_margin_enabled", False)),
+            rect_base_margin_extra=float(overrides.get("rect_base_margin_extra", 0.0)),
+            rect_corner_margin_max=float(overrides.get("rect_corner_margin_max", 0.0)),
+            rect_corner_proximity_distance=float(overrides.get("rect_corner_proximity_distance", 0.4)),
+            rect_corner_speed_min=float(overrides.get("rect_corner_speed_min", 0.05)),
+            rect_corner_alignment_power=float(overrides.get("rect_corner_alignment_power", 1.0)),
+            rect_dual_edge_cbf_enabled=bool(overrides.get("rect_dual_edge_cbf_enabled", False)),
+            rect_dual_edge_proximity_distance=float(overrides.get("rect_dual_edge_proximity_distance", 0.0)),
             u_min=u_min,
             u_max=u_max,
         )

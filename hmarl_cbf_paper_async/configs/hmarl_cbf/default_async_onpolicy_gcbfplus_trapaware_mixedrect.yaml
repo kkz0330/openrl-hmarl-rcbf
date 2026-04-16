@@ -23,7 +23,7 @@ env:
   reward_progress_weight: 0.5
   reward_time_penalty: 0.01
   reward_reach_bonus: 5.0
-  reward_collision_penalty: 2.5
+  reward_collision_penalty: 3.0
   reward_oob_penalty: 2.5
   initial_speed_toward_goal: 0.0
   obstacle_rect_prob: 0.5
@@ -39,6 +39,8 @@ env:
   rect_corner_proximity_distance: 0.35
   rect_corner_speed_min: 0.1
   rect_corner_alignment_power: 1.5
+  rect_dual_edge_cbf_enabled: true
+  rect_dual_edge_proximity_distance: 0.35
 
 synchronization:
   mode: async
@@ -90,6 +92,8 @@ skills:
     rect_corner_proximity_distance: 0.35
     rect_corner_speed_min: 0.1
     rect_corner_alignment_power: 1.5
+    rect_dual_edge_cbf_enabled: true
+    rect_dual_edge_proximity_distance: 0.35
     w_accel: 0.05
     w_turn: 0.03
     w_speed_dev: 0.04

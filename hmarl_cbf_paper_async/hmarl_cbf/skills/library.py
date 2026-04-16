@@ -178,6 +178,8 @@ def _safety_constraints_common(_: AgentState, ctx: Dict[str, Any]) -> Dict[str, 
         "rect_corner_proximity_distance": float(ctx.get("rect_corner_proximity_distance", 0.4)),
         "rect_corner_speed_min": float(ctx.get("rect_corner_speed_min", 0.05)),
         "rect_corner_alignment_power": float(ctx.get("rect_corner_alignment_power", 1.0)),
+        "rect_dual_edge_cbf_enabled": bool(ctx.get("rect_dual_edge_cbf_enabled", False)),
+        "rect_dual_edge_proximity_distance": float(ctx.get("rect_dual_edge_proximity_distance", 0.0)),
     }
 
 

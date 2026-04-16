@@ -240,6 +240,83 @@ def obstacle_contact_geometry(point: np.ndarray, item: Dict[str, Any]) -> Dict[s
     }
 
 
+def obstacle_cbf_geometries(
+    point: np.ndarray,
+    item: Dict[str, Any],
+    *,
+    rect_dual_edge_enabled: bool = False,
+    rect_dual_edge_proximity_distance: float = 0.4,
+) -> List[Dict[str, Any]]:
+    obs = normalize_obstacle(item)
+    if obs["type"] != "rect":
+        return [obstacle_contact_geometry(point, obs)]
+
+    point = _vec2(point, "point")
+    center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
+    half_extents = np.asarray(obs["half_extents"], dtype=np.float32).reshape(2)
+    yaw = float(obs.get("yaw", 0.0))
+    local = _transform_to_local(point, center, yaw)
+    inside = bool(np.all(np.abs(local) <= (half_extents + 1e-8)))
+
+    def _face_geometry(axis: int) -> Dict[str, Any]:
+        sign_dir = 1.0 if float(local[axis]) >= 0.0 else -1.0
+        other_axis = 1 - axis
+        closest_local = local.astype(np.float32).copy()
+        closest_local[axis] = sign_dir * float(half_extents[axis])
+        closest_local[other_axis] = float(np.clip(local[other_axis], -half_extents[other_axis], half_extents[other_axis]))
+        closest = _transform_to_world(closest_local, center, yaw)
+        offset = point - closest
+        if inside:
+            signed_surface = -float(max(half_extents[axis] - abs(float(local[axis])), 0.0))
+            sign = -1.0
+        else:
+            signed_surface = float(np.linalg.norm(offset))
+            sign = 1.0
+        active_mask = np.zeros((2,), dtype=np.float32)
+        active_mask[axis] = 1.0
+        return {
+            "type": "rect",
+            "closest_point": closest.astype(np.float32),
+            "closest_point_local": closest_local.astype(np.float32),
+            "offset": offset.astype(np.float32),
+            "signed_surface": signed_surface,
+            "sign": sign,
+            "active_mask": active_mask,
+            "face_axis": int(axis),
+        }
+
+    geom_x = _face_geometry(0)
+    geom_y = _face_geometry(1)
+    dist_x = float(np.linalg.norm(np.asarray(geom_x["offset"], dtype=np.float32).reshape(2)))
+    dist_y = float(np.linalg.norm(np.asarray(geom_y["offset"], dtype=np.float32).reshape(2)))
+    if dist_x <= dist_y:
+        primary_axis, secondary_axis = 0, 1
+    else:
+        primary_axis, secondary_axis = 1, 0
+
+    primary = geom_x if primary_axis == 0 else geom_y
+    geometries: List[Dict[str, Any]] = [primary]
+
+    if not rect_dual_edge_enabled:
+        return geometries
+
+    threshold = float(max(1e-6, rect_dual_edge_proximity_distance))
+    axis_closeness = np.clip(
+        (np.abs(local) - np.maximum(half_extents - threshold, 0.0)) / threshold,
+        0.0,
+        1.0,
+    ).astype(np.float32)
+    corner_proximity = float(np.min(axis_closeness))
+    if corner_proximity <= 0.0:
+        return geometries
+
+    secondary = geom_y if secondary_axis == 1 else geom_x
+    secondary["corner_proximity"] = corner_proximity
+    geometries[0]["corner_proximity"] = corner_proximity
+    geometries.append(secondary)
+    return geometries
+
+
 def rect_corner_margin_geometry(
     item: Dict[str, Any],
     closest_point_local: np.ndarray,

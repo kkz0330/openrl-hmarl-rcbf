@@ -460,6 +460,8 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
             "rect_corner_proximity_distance": cfg["env"].get("rect_corner_proximity_distance", 0.4),
             "rect_corner_speed_min": cfg["env"].get("rect_corner_speed_min", 0.05),
             "rect_corner_alignment_power": cfg["env"].get("rect_corner_alignment_power", 1.0),
+            "rect_dual_edge_cbf_enabled": cfg["env"].get("rect_dual_edge_cbf_enabled", False),
+            "rect_dual_edge_proximity_distance": cfg["env"].get("rect_dual_edge_proximity_distance", 0.0),
             "use_input_bounds": True,
         }
     )
@@ -483,6 +485,8 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
     skill_params["rect_corner_proximity_distance"] = float(cfg["env"].get("rect_corner_proximity_distance", 0.4))
     skill_params["rect_corner_speed_min"] = float(cfg["env"].get("rect_corner_speed_min", 0.05))
     skill_params["rect_corner_alignment_power"] = float(cfg["env"].get("rect_corner_alignment_power", 1.0))
+    skill_params["rect_dual_edge_cbf_enabled"] = bool(cfg["env"].get("rect_dual_edge_cbf_enabled", False))
+    skill_params["rect_dual_edge_proximity_distance"] = float(cfg["env"].get("rect_dual_edge_proximity_distance", 0.0))
     runtime = SkillRuntimeManager(
         skills,
         default_ctx=skill_params,
