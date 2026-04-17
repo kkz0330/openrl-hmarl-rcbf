@@ -4,11 +4,11 @@ env:
   n_agents: 4
   n_obstacles: 3
   world_size: 10.0
-  dt: 0.1
+  dt: 0.03
   horizon: 200
   action_limit: 2.0
   velocity_limit: 2.0
-  agent_radius: 0.2
+  agent_radius: 0.05
   goal_threshold: 0.3
   goal_speed_threshold: 0.1
   lidar_beams: 32

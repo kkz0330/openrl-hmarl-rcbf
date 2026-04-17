@@ -144,6 +144,9 @@ def main() -> None:
             "action_limit": float(cfg["env"]["action_limit"]),
             "cbf_u_max": float(cfg["env"]["action_limit"]),
             "dt": float(cfg["env"]["dt"]),
+            "robust_cbf": bool(cfg.get("safety", {}).get("robust_cbf", False)),
+            "disturbance_accel_max": float(cfg["env"].get("disturbance_accel_max", 0.0)),
+            "relative_disturbance_accel_max": float(cfg.get("safety", {}).get("relative_disturbance_accel_max", 0.0)),
         },
     )
     skill_runtime.reset([agent_id])
@@ -210,7 +213,11 @@ def main() -> None:
 
         trace_positions.append(np.asarray(next_states[agent_id].position, dtype=np.float32).reshape(1, 2))
         trace_unsafe.append(np.asarray([bool(info.get("unsafe_flags", {}).get(agent_id, False))], dtype=bool))
-        frame_labels.append(f"t={t} skill={skill_names[int(current_skill)]} reward={float(rewards[agent_id]):.3f}")
+        wind_accel = np.asarray(info.get("wind_accel", np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
+        frame_labels.append(
+            f"t={t} skill={skill_names[int(current_skill)]} reward={float(rewards[agent_id]):.3f}  "
+            f"wind=({wind_accel[0]:+0.2f}, {wind_accel[1]:+0.2f})  |w|={float(np.linalg.norm(wind_accel)):.2f}"
+        )
         obs = next_obs
 
         if bool(step_out.beta) and not (terminated or truncated):

@@ -189,6 +189,9 @@ def _run_episode(
             "action_limit": float(cfg["env"]["action_limit"]),
             "cbf_u_max": float(cfg["env"]["action_limit"]),
             "dt": float(cfg["env"]["dt"]),
+            "robust_cbf": bool(cfg.get("safety", {}).get("robust_cbf", False)),
+            "disturbance_accel_max": float(cfg["env"].get("disturbance_accel_max", 0.0)),
+            "relative_disturbance_accel_max": float(cfg.get("safety", {}).get("relative_disturbance_accel_max", 0.0)),
         },
     )
     runtime.reset(agent_ids)

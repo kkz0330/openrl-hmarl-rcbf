@@ -17,6 +17,9 @@ class DistributedCBFBaselineConfig:
     cbf_share_obs: float = 1.0
     cbf_eps: float = 1e-4
     cbf_u_max: float = 2.0
+    robust_cbf: bool = False
+    disturbance_accel_max: float = 0.0
+    relative_disturbance_accel_max: float = 0.0
     cbf_k0: float = 1.0
     cbf_k1: float = 1.0
     hocbf_gamma_h: float = 1.0
@@ -59,6 +62,9 @@ class DistributedCBFBaselineConfig:
             cbf_share_obs=float(data.get("cbf_share_obs", 1.0)),
             cbf_eps=float(data.get("cbf_eps", 1e-4)),
             cbf_u_max=float(data.get("cbf_u_max", 2.0)),
+            robust_cbf=bool(data.get("robust_cbf", False)),
+            disturbance_accel_max=float(data.get("disturbance_accel_max", 0.0)),
+            relative_disturbance_accel_max=float(data.get("relative_disturbance_accel_max", 0.0)),
             cbf_k0=float(data.get("cbf_k0", 1.0)),
             cbf_k1=float(data.get("cbf_k1", 1.0)),
             hocbf_gamma_h=float(data.get("hocbf_gamma_h", 1.0)),
@@ -197,6 +203,9 @@ class DistributedCBFBaselineController:
             overrides = {
                 "cbf_mode": str(self.config.cbf_mode),
                 "cbf_u_max": float(self.config.cbf_u_max),
+                "robust_cbf": bool(self.config.robust_cbf),
+                "disturbance_accel_max": float(self.config.disturbance_accel_max),
+                "relative_disturbance_accel_max": float(self.config.relative_disturbance_accel_max),
                 "cbf_share_agent": float(self.config.cbf_share_agent),
                 "cbf_share_obs": float(self.config.cbf_share_obs),
                 "cbf_eps": float(self.config.cbf_eps),

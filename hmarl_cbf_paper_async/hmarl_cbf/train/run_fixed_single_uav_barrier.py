@@ -261,7 +261,12 @@ def _build_trainer(
     skill_params["world_size"] = float(cfg["env"]["world_size"])
     skill_params["boundary_cbf"] = bool(cfg.get("safety", {}).get("boundary_cbf", True))
     skill_params["boundary_margin"] = float(
-        cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.2))
+        cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.05))
+    )
+    skill_params["robust_cbf"] = bool(cfg.get("safety", {}).get("robust_cbf", False))
+    skill_params["disturbance_accel_max"] = float(cfg["env"].get("disturbance_accel_max", 0.0))
+    skill_params["relative_disturbance_accel_max"] = float(
+        cfg.get("safety", {}).get("relative_disturbance_accel_max", 0.0)
     )
     runtime = SkillRuntimeManager(skills, default_ctx=skill_params)
     low_controller = LowLevelSafeController(
@@ -424,7 +429,10 @@ def _render_periodic_skill_video(
 
         sid = current_skill[agent_ids[0]]
         sname = skill_names[sid] if 0 <= sid < len(skill_names) else str(sid)
-        frame_labels.append(f"t={t} skill={sname}")
+        wind_accel = np.asarray(info.get("wind_accel", np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
+        frame_labels.append(
+            f"t={t} skill={sname}  wind=({wind_accel[0]:+0.2f}, {wind_accel[1]:+0.2f})  |w|={float(np.linalg.norm(wind_accel)):.2f}"
+        )
 
         obs = next_obs
         if len(switched_agents) > 0 and not (terminated or truncated):

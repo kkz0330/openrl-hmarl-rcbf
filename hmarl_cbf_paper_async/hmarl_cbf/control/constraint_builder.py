@@ -16,6 +16,24 @@ def _rect_smooth_tau(overrides: Dict[str, Any]) -> float:
     return float(max(1e-4, overrides.get("rect_smooth_tau", 0.1)))
 
 
+def _robust_cbf_enabled(overrides: Dict[str, Any]) -> bool:
+    return bool(overrides.get("robust_cbf", False))
+
+
+def _disturbance_accel_max(overrides: Dict[str, Any]) -> float:
+    return float(max(0.0, overrides.get("disturbance_accel_max", 0.0)))
+
+
+def _relative_disturbance_accel_max(overrides: Dict[str, Any]) -> float:
+    return float(max(0.0, overrides.get("relative_disturbance_accel_max", 0.0)))
+
+
+def _robust_margin(a_row: np.ndarray, bound: float, enabled: bool) -> float:
+    if (not enabled) or bound <= 0.0:
+        return 0.0
+    return float(np.linalg.norm(np.asarray(a_row, dtype=np.float32).reshape(-1)) * bound)
+
+
 class ConstraintBuilder:
     """Builds distributed hard-CBF and soft-CLF constraints for one agent."""
 
@@ -60,6 +78,9 @@ class ConstraintBuilder:
         boundary_cbf = bool(overrides.get("boundary_cbf", False))
         world_size = float(overrides.get("world_size", 0.0))
         boundary_margin = float(overrides.get("boundary_margin", 0.0))
+        robust_cbf = _robust_cbf_enabled(overrides)
+        disturbance_accel_max = _disturbance_accel_max(overrides)
+        relative_disturbance_accel_max = _relative_disturbance_accel_max(overrides)
 
         A_cbf_rows: List[np.ndarray] = []
         b_cbf_rows: List[float] = []
@@ -104,6 +125,7 @@ class ConstraintBuilder:
                 lf_h1 = 2.0 * float(np.dot(v_rel, v_rel)) + 2.0 * alpha0 * pv
                 a_row = (-2.0 * p_rel).astype(np.float32)  # -L_g h1 wrt u_i
                 b_row = cbf_share_agent * (lf_h1 + alpha1 * h1)
+                b_row -= _robust_margin(a_row, relative_disturbance_accel_max, robust_cbf)
                 A_cbf_rows.append(a_row)
                 b_cbf_rows.append(float(b_row))
                 continue
@@ -114,6 +136,7 @@ class ConstraintBuilder:
                 const_term = 2.0 * float(np.dot(v_rel, v_rel))
                 a_row = (-2.0 * p_rel).astype(np.float32)
             b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
+            b_row -= _robust_margin(a_row, relative_disturbance_accel_max, robust_cbf)
             A_cbf_rows.append(a_row)
             b_cbf_rows.append(float(b_row))
 
@@ -143,6 +166,7 @@ class ConstraintBuilder:
                     lf_h1 = 2.0 * float(np.dot(state_i.velocity, state_i.velocity)) + 2.0 * alpha0 * pv
                     a_row = (-2.0 * p_rel).astype(np.float32)
                     b_row = cbf_share_obs * (lf_h1 + alpha1 * h1)
+                    b_row -= _robust_margin(a_row, disturbance_accel_max, robust_cbf)
                     A_cbf_rows.append(a_row)
                     b_cbf_rows.append(float(b_row))
                     continue
@@ -170,14 +194,17 @@ class ConstraintBuilder:
                     alpha1 = k1 * hocbf_gamma_hdot
                     h1 = hdot_term + alpha0 * h_term
                     b_row = cbf_share_obs * (const_term + alpha0 * hdot_term + alpha1 * h1)
+                    b_row -= _robust_margin(a_row, disturbance_accel_max, robust_cbf)
                     A_cbf_rows.append(a_row)
                     b_cbf_rows.append(float(b_row))
                     continue
                 b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
+                b_row -= _robust_margin(a_row, disturbance_accel_max, robust_cbf)
                 A_cbf_rows.append(a_row)
                 b_cbf_rows.append(float(b_row))
                 continue
             b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
+            b_row -= _robust_margin(a_row, disturbance_accel_max, robust_cbf)
             A_cbf_rows.append(a_row)
             b_cbf_rows.append(float(b_row))
 
@@ -208,6 +235,7 @@ class ConstraintBuilder:
                     b_row = lf_h1 + alpha1 * h1
                 else:
                     b_row = (k1 * hocbf_gamma_hdot) * h0_dot + (k0 * hocbf_gamma_h) * h0
+                b_row -= _robust_margin(a_row, disturbance_accel_max, robust_cbf)
                 A_cbf_rows.append(a_row)
                 b_cbf_rows.append(float(b_row))
 

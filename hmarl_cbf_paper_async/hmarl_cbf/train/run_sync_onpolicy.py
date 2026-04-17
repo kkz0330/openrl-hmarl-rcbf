@@ -436,6 +436,9 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
             "cbf_share_agent": cfg["skills"]["params"].get("cbf_share_agent", 0.5),
             "cbf_share_obs": cfg["skills"]["params"].get("cbf_share_obs", 1.0),
             "cbf_u_max": action_limit,
+            "robust_cbf": cfg.get("safety", {}).get("robust_cbf", False),
+            "disturbance_accel_max": cfg["env"].get("disturbance_accel_max", 0.0),
+            "relative_disturbance_accel_max": cfg.get("safety", {}).get("relative_disturbance_accel_max", 0.0),
             "cbf_k0": cfg.get("low_level_qp", {}).get("cbf_k0", 1.0),
             "cbf_k1": cfg.get("low_level_qp", {}).get("cbf_k1", 1.0),
             "hocbf_gamma_h": cfg.get("low_level_qp", {}).get("hocbf_gamma_h", 1.0),
@@ -452,7 +455,7 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
             "neighbor_radius": cfg["env"].get("neighbor_radius", 2.0),
             "obstacle_range": cfg["env"].get("lidar_range", 3.0),
             "boundary_cbf": cfg.get("safety", {}).get("boundary_cbf", True),
-            "boundary_margin": cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.2)),
+            "boundary_margin": cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.05)),
             "world_size": cfg["env"].get("world_size", 10.0),
             "rect_base_margin_extra": cfg["env"].get("rect_base_margin_extra", 0.0),
             "rect_corner_margin_enabled": cfg["env"].get("rect_corner_margin_enabled", False),
@@ -478,7 +481,12 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
     skill_params["world_size"] = float(cfg["env"]["world_size"])
     skill_params["boundary_cbf"] = bool(cfg.get("safety", {}).get("boundary_cbf", True))
     skill_params["boundary_margin"] = float(
-        cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.2))
+        cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.05))
+    )
+    skill_params["robust_cbf"] = bool(cfg.get("safety", {}).get("robust_cbf", False))
+    skill_params["disturbance_accel_max"] = float(cfg["env"].get("disturbance_accel_max", 0.0))
+    skill_params["relative_disturbance_accel_max"] = float(
+        cfg.get("safety", {}).get("relative_disturbance_accel_max", 0.0)
     )
     skill_params["rect_base_margin_extra"] = float(cfg["env"].get("rect_base_margin_extra", 0.0))
     skill_params["rect_corner_margin_enabled"] = bool(cfg["env"].get("rect_corner_margin_enabled", False))

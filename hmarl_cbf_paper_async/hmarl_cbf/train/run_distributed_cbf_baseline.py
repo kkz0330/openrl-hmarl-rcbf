@@ -76,6 +76,7 @@ def _render_episode(
     renderer: TrajectoryRenderer,
     positions: List[np.ndarray],
     unsafe_flags: List[np.ndarray],
+    frame_labels: List[str],
     goals: np.ndarray,
     obstacles: List[Dict[str, np.ndarray | float]],
     out_path: Path,
@@ -87,6 +88,7 @@ def _render_episode(
         goals=goals,
         obstacles=obstacles,
         unsafe_flags=np.stack(unsafe_flags, axis=0),
+        frame_labels=frame_labels,
     )
     if render_gif:
         return renderer.render_gif(trace, out_path, fps=max(1, int(fps)))
@@ -122,7 +124,12 @@ def main() -> None:
     baseline_cfg.world_size = float(env_cfg["world_size"])
     baseline_cfg.boundary_cbf = bool(cfg.get("safety", {}).get("boundary_cbf", True))
     baseline_cfg.boundary_margin = float(
-        cfg.get("safety", {}).get("boundary_margin", env_cfg.get("agent_radius", 0.2))
+        cfg.get("safety", {}).get("boundary_margin", env_cfg.get("agent_radius", 0.05))
+    )
+    baseline_cfg.robust_cbf = bool(cfg.get("safety", {}).get("robust_cbf", baseline_cfg.robust_cbf))
+    baseline_cfg.disturbance_accel_max = float(cfg["env"].get("disturbance_accel_max", baseline_cfg.disturbance_accel_max))
+    baseline_cfg.relative_disturbance_accel_max = float(
+        cfg.get("safety", {}).get("relative_disturbance_accel_max", baseline_cfg.relative_disturbance_accel_max)
     )
     baseline = DistributedCBFBaselineController(
         constraint_builder=constraint_builder,
@@ -157,6 +164,7 @@ def main() -> None:
         ep_return = {aid: 0.0 for aid in agent_ids}
         positions: List[np.ndarray] = []
         unsafe_trace: List[np.ndarray] = []
+        frame_labels: List[str] = []
         goals = np.stack([s.goal for s in env.get_agent_states()], axis=0).astype(np.float32)
         obstacles = env.get_obstacles()
 
@@ -171,6 +179,10 @@ def main() -> None:
             positions.append(np.stack([states_next[aid].position for aid in agent_ids], axis=0).astype(np.float32))
             unsafe_row = np.asarray([bool(info.get("unsafe_flags", {}).get(aid, False)) for aid in agent_ids], dtype=bool)
             unsafe_trace.append(unsafe_row)
+            wind_accel = np.asarray(info.get("wind_accel", np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
+            frame_labels.append(
+                f"t={len(positions)-1}  wind=({wind_accel[0]:+0.2f}, {wind_accel[1]:+0.2f})  |w|={float(np.linalg.norm(wind_accel)):.2f}"
+            )
 
             for aid in agent_ids:
                 ep_return[aid] += float(rewards[aid])
@@ -199,6 +211,7 @@ def main() -> None:
                 renderer=renderer,
                 positions=positions,
                 unsafe_flags=unsafe_trace,
+                frame_labels=frame_labels,
                 goals=goals,
                 obstacles=obstacles,
                 out_path=out_path,

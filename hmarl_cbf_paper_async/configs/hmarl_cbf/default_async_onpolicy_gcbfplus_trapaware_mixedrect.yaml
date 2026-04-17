@@ -4,11 +4,11 @@ env:
   n_agents: 4
   n_obstacles: 4
   world_size: 10.0
-  dt: 0.1
+  dt: 0.03
   horizon: 200
   action_limit: 2.0
   velocity_limit: 2.0
-  agent_radius: 0.2
+  agent_radius: 0.05
   goal_threshold: 0.3
   goal_speed_threshold: 0.1
   lidar_beams: 32
@@ -26,6 +26,10 @@ env:
   reward_collision_penalty: 3.0
   reward_oob_penalty: 2.5
   initial_speed_toward_goal: 0.0
+  disturbance_enabled: true
+  disturbance_accel_max: 0.2
+  disturbance_shared_across_agents: true
+  disturbance_hold_steps: 1
   obstacle_rect_prob: 0.35
   obstacle_circle_radius_min: 0.4
   obstacle_circle_radius_max: 4.0
@@ -33,7 +37,7 @@ env:
   obstacle_rect_half_extent_max: 2.0
   obstacle_rect_yaw_max: 3.14159
   obstacle_allow_outside_world: false
-  rect_base_margin_extra: 0.15
+  rect_base_margin_extra: 0.10
   rect_corner_margin_enabled: true
   rect_corner_margin_max: 0.2
   rect_corner_proximity_distance: 0.35
@@ -50,6 +54,8 @@ synchronization:
 safety:
   d_min_agent: 0.3
   d_safe_obs: 0.3
+  robust_cbf: true
+  relative_disturbance_accel_max: 0.0
   boundary_cbf: false
   boundary_margin: 0.3
 
@@ -87,7 +93,7 @@ skills:
     cbf_share_agent: 0.5
     cbf_share_obs: 1.0
     use_input_bounds: true
-    rect_base_margin_extra: 0.15
+    rect_base_margin_extra: 0.10
     rect_corner_margin_enabled: true
     rect_corner_margin_max: 0.2
     rect_corner_proximity_distance: 0.35

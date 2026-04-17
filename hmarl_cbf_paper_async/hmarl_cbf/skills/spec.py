@@ -22,7 +22,7 @@ def validate_skill_spec(skill: SkillSpec) -> None:
         lidar_scan=LidarScan(ranges=np.ones(8, dtype=np.float32), max_range=8.0),
         neighbor_summary=np.zeros(8, dtype=np.float32),
     )
-    ctx: Dict[str, Any] = {"dt": 0.1}
+    ctx: Dict[str, Any] = {"dt": 0.03}
     _ = bool(skill.initiation_set_fn(probe_state, ctx))
     _ = bool(skill.termination_set_fn(probe_state, ctx))
     _ = bool(skill.termination_fn(probe_state, ctx, 1))

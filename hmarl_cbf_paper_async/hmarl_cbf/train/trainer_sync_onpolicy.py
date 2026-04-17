@@ -441,6 +441,9 @@ class TrainerSyncOnPolicy:
             rect_dual_edge_cbf_enabled=bool(overrides.get("rect_dual_edge_cbf_enabled", False)),
             rect_dual_edge_proximity_distance=float(overrides.get("rect_dual_edge_proximity_distance", 0.0)),
             rect_smooth_tau=float(overrides.get("rect_smooth_tau", 0.1)),
+            robust_cbf=bool(overrides.get("robust_cbf", False)),
+            disturbance_accel_max=float(overrides.get("disturbance_accel_max", 0.0)),
+            relative_disturbance_accel_max=float(overrides.get("relative_disturbance_accel_max", 0.0)),
             u_min=u_min,
             u_max=u_max,
         )
@@ -1484,6 +1487,7 @@ class TrainerSyncOnPolicy:
             )
             trace_positions: List[np.ndarray] = []
             trace_unsafe: List[np.ndarray] = []
+            frame_labels: List[str] = []
             obstacles = self.env.get_obstacles()
 
             def _obs_batch(obs_map: Dict[int, Dict[str, Any]]) -> np.ndarray:
@@ -1545,6 +1549,10 @@ class TrainerSyncOnPolicy:
                 current_pos = np.stack([next_states[aid].position for aid in agent_ids], axis=0).astype(np.float32)
                 trace_positions.append(current_pos)
                 trace_unsafe.append(np.asarray([bool(info.get("unsafe_flags", {}).get(aid, False)) for aid in agent_ids], dtype=bool))
+                wind_accel = np.asarray(info.get("wind_accel", np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
+                frame_labels.append(
+                    f"t={len(trace_positions)-1}  wind=({wind_accel[0]:+0.2f}, {wind_accel[1]:+0.2f})  |w|={float(np.linalg.norm(wind_accel)):.2f}"
+                )
 
                 for aid in agent_ids:
                     ep_return[aid] += float(rewards[aid])
@@ -1612,6 +1620,7 @@ class TrainerSyncOnPolicy:
                     goals=goals,
                     obstacles=obstacles,
                     unsafe_flags=np.stack(trace_unsafe, axis=0),
+                    frame_labels=frame_labels,
                 )
                 out_dir = self.hooks.eval_render_dir
                 if bool(self.hooks.eval_render_gif):

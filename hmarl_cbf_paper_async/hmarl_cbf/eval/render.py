@@ -70,6 +70,18 @@ class TrajectoryRenderer:
             ax.scatter(pos[0, i, 0], pos[0, i, 1], color=color, marker="o", s=20)
             ax.scatter(pos[-1, i, 0], pos[-1, i, 1], color=color, marker="x", s=40)
             ax.scatter(goals[i, 0], goals[i, 1], color=color, marker="*", s=65)
+        if trace.frame_labels:
+            ax.text(
+                0.02,
+                0.98,
+                str(trace.frame_labels[-1]),
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=9,
+                color="black",
+                bbox={"facecolor": "white", "alpha": 0.6, "edgecolor": "none", "pad": 2.0},
+            )
 
         fig.tight_layout()
         fig.savefig(output, dpi=150)

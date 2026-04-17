@@ -296,7 +296,7 @@ def _parse_obstacles(raw: str) -> List[Dict[str, Any]]:
 
 def _resolve_fixed_scene(args: argparse.Namespace, cfg: Dict[str, Any]) -> Tuple[List[Dict[str, Any]] | None, List[Dict[str, Any]] | None]:
     env_cfg = dict(cfg["env"])
-    agent_radius = float(env_cfg.get("agent_radius", 0.2))
+    agent_radius = float(env_cfg.get("agent_radius", 0.05))
     world_size = float(env_cfg.get("world_size", 10.0))
     if args.scenario == "corridor_8uav_dual_passage":
         return _corridor_8uav_dual_passage(world_size=world_size, agent_radius=agent_radius)
@@ -393,7 +393,12 @@ def _build_eval_trainer(cfg: Dict[str, Any], deterministic: bool) -> TrainerSync
     skill_params["world_size"] = float(cfg["env"]["world_size"])
     skill_params["boundary_cbf"] = bool(cfg.get("safety", {}).get("boundary_cbf", True))
     skill_params["boundary_margin"] = float(
-        cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.2))
+        cfg.get("safety", {}).get("boundary_margin", cfg["env"].get("agent_radius", 0.05))
+    )
+    skill_params["robust_cbf"] = bool(cfg.get("safety", {}).get("robust_cbf", False))
+    skill_params["disturbance_accel_max"] = float(cfg["env"].get("disturbance_accel_max", 0.0))
+    skill_params["relative_disturbance_accel_max"] = float(
+        cfg.get("safety", {}).get("relative_disturbance_accel_max", 0.0)
     )
     skill_params["rect_base_margin_extra"] = float(cfg["env"].get("rect_base_margin_extra", 0.0))
     skill_params["rect_corner_margin_enabled"] = bool(cfg["env"].get("rect_corner_margin_enabled", False))
@@ -488,6 +493,7 @@ def _evaluate_once(
 
     trace_positions: List[np.ndarray] = []
     trace_unsafe: List[np.ndarray] = []
+    frame_labels: List[str] = []
     obstacles = trainer.env.get_obstacles()
     goals = np.stack([np.asarray(s.goal, dtype=np.float32).reshape(2) for s in trainer.env.get_agent_states()], axis=0)
 
@@ -529,6 +535,10 @@ def _evaluate_once(
             trace_unsafe.append(
                 np.asarray([bool(info.get("unsafe_flags", {}).get(aid, False)) for aid in agent_ids], dtype=bool)
             )
+            wind_accel = np.asarray(info.get("wind_accel", np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
+            frame_labels.append(
+                f"t={len(trace_positions)-1}  wind=({wind_accel[0]:+0.2f}, {wind_accel[1]:+0.2f})  |w|={float(np.linalg.norm(wind_accel)):.2f}"
+            )
 
         obs = next_obs
         if (len(switched_agents) > 0) and not (terminated or truncated):
@@ -561,6 +571,7 @@ def _evaluate_once(
         "trace_unsafe": trace_unsafe,
         "goals": goals,
         "obstacles": obstacles,
+        "frame_labels": frame_labels,
     }
 
 
@@ -630,6 +641,7 @@ def main() -> None:
                 goals=np.asarray(row["goals"], dtype=np.float32),
                 obstacles=list(row["obstacles"]),
                 unsafe_flags=np.stack(row["trace_unsafe"], axis=0),
+                frame_labels=list(row.get("frame_labels", [])),
             )
             suffix = "gif" if render_gif else "png"
             media_path = _render_episode(
@@ -645,6 +657,7 @@ def main() -> None:
         row.pop("trace_unsafe", None)
         row.pop("goals", None)
         row.pop("obstacles", None)
+        row.pop("frame_labels", None)
         rows.append(row)
 
         total_safe_reach += int(row["safe_reach_count"])

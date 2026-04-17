@@ -33,11 +33,11 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         n_agents: int = 4,
         n_obstacles: int = 3,
         world_size: float = 10.0,
-        dt: float = 0.1,
+        dt: float = 0.03,
         horizon: int = 200,
         action_limit: float = 1.0,
         velocity_limit: float = 2.0,
-        agent_radius: float = 0.2,
+        agent_radius: float = 0.05,
         goal_threshold: float = 0.3,
         goal_speed_threshold: float = 0.1,
         lidar_beams: int = 32,
@@ -62,6 +62,10 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         obstacle_rect_half_extent_max: float = 1.0,
         obstacle_rect_yaw_max: float = 0.0,
         obstacle_allow_outside_world: bool = False,
+        disturbance_enabled: bool = False,
+        disturbance_accel_max: float = 0.0,
+        disturbance_shared_across_agents: bool = True,
+        disturbance_hold_steps: int = 1,
         rect_base_margin_extra: float = 0.0,
         rect_corner_margin_enabled: bool = False,
         rect_corner_margin_max: float = 0.0,
@@ -103,6 +107,10 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         self.obstacle_rect_half_extent_max = float(obstacle_rect_half_extent_max)
         self.obstacle_rect_yaw_max = float(max(0.0, obstacle_rect_yaw_max))
         self.obstacle_allow_outside_world = bool(obstacle_allow_outside_world)
+        self.disturbance_enabled = bool(disturbance_enabled)
+        self.disturbance_accel_max = float(max(0.0, disturbance_accel_max))
+        self.disturbance_shared_across_agents = bool(disturbance_shared_across_agents)
+        self.disturbance_hold_steps = int(max(1, disturbance_hold_steps))
         self.rect_base_margin_extra = float(max(0.0, rect_base_margin_extra))
         self.rect_corner_margin_enabled = bool(rect_corner_margin_enabled)
         self.rect_corner_margin_max = float(max(0.0, rect_corner_margin_max))
@@ -125,6 +133,9 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         self._states: List[AgentState] = []
         self._obstacles: List[Dict[str, np.ndarray | float]] = []
         self._frozen_agents: set[int] = set()
+        self._current_wind_accel = np.zeros(2, dtype=np.float32)
+        self._current_wind_accel_agents: Dict[int, np.ndarray] = {}
+        self._wind_hold_counter = 0
 
         if spaces is not None:
             self.action_space = spaces.Box(
@@ -177,6 +188,34 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
             if not placed:
                 raise RuntimeError("failed to sample non-overlapping obstacles")
         return obstacles
+
+    def _sample_wind_accel(self) -> np.ndarray:
+        if not self.disturbance_enabled or self.disturbance_accel_max <= 0.0:
+            return np.zeros(2, dtype=np.float32)
+        angle = float(self._rng.uniform(-np.pi, np.pi))
+        radius = float(self.disturbance_accel_max * np.sqrt(float(self._rng.uniform(0.0, 1.0))))
+        return np.asarray([radius * np.cos(angle), radius * np.sin(angle)], dtype=np.float32)
+
+    def _refresh_wind_accel(self, force: bool = False) -> None:
+        if force or self._wind_hold_counter <= 0:
+            if self.disturbance_shared_across_agents:
+                self._current_wind_accel = self._sample_wind_accel()
+                self._current_wind_accel_agents = {
+                    int(agent_id): self._current_wind_accel.copy()
+                    for agent_id in range(self.n_agents)
+                }
+            else:
+                self._current_wind_accel_agents = {
+                    int(agent_id): self._sample_wind_accel()
+                    for agent_id in range(self.n_agents)
+                }
+                if self._current_wind_accel_agents:
+                    stacked = np.stack(list(self._current_wind_accel_agents.values()), axis=0).astype(np.float32)
+                    self._current_wind_accel = np.mean(stacked, axis=0).astype(np.float32)
+                else:
+                    self._current_wind_accel = np.zeros(2, dtype=np.float32)
+            self._wind_hold_counter = self.disturbance_hold_steps
+        self._wind_hold_counter = max(0, self._wind_hold_counter - 1)
 
     def _is_point_clear_of_obstacles(self, point: np.ndarray, obstacles: Sequence[Dict[str, np.ndarray | float]]) -> bool:
         for obs in obstacles:
@@ -288,6 +327,11 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
     def get_obstacles(self) -> List[Dict[str, np.ndarray | float]]:
         return [copy_obstacle(o) for o in self._obstacles]
 
+    def get_current_wind_accel(self, agent_id: int | None = None) -> np.ndarray:
+        if agent_id is not None and int(agent_id) in self._current_wind_accel_agents:
+            return np.asarray(self._current_wind_accel_agents[int(agent_id)], dtype=np.float32).copy()
+        return np.asarray(self._current_wind_accel, dtype=np.float32).copy()
+
     def freeze_agents(self, agent_ids: Sequence[int]) -> None:
         for agent_id in agent_ids:
             idx = int(agent_id)
@@ -364,6 +408,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         self._rng = np.random.default_rng(seed)
         self.step_count = 0
         self._frozen_agents.clear()
+        self._refresh_wind_accel(force=True)
         if "obstacles" in options:
             self._obstacles = self._parse_obstacles_option(options["obstacles"])  # type: ignore[arg-type]
         else:
@@ -376,6 +421,9 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         info = {
             "seed": seed,
             "step_count": self.step_count,
+            "wind_accel": self.get_current_wind_accel(),
+            "wind_accel_agents": {int(aid): self.get_current_wind_accel(aid) for aid in range(self.n_agents)},
+            "wind_norm": float(np.linalg.norm(self._current_wind_accel)),
             "collision_flags": self.collision_mask(),
             "reach_flags": self.finish_mask(),
             "unsafe_flags": self.unsafe_mask(),
@@ -385,6 +433,7 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
 
     def step(self, actions: Dict[int, np.ndarray]):  # type: ignore[override]
         self.step_count += 1
+        self._refresh_wind_accel(force=False)
         prev_dist = {
             state.agent_id: float(np.linalg.norm(state.goal - state.position))
             for state in self._states
@@ -396,7 +445,8 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
                 continue
             action = np.asarray(actions.get(state.agent_id, np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
             action = np.clip(action, -self.action_limit, self.action_limit)
-            state.velocity = np.clip(state.velocity + action * self.dt, -self.velocity_limit, self.velocity_limit)
+            accel_total = action + self.get_current_wind_accel(state.agent_id)
+            state.velocity = np.clip(state.velocity + accel_total * self.dt, -self.velocity_limit, self.velocity_limit)
             state.position = state.position + state.velocity * self.dt
 
         collision = self.collision_mask()
@@ -432,5 +482,8 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
             "safety_metrics": metrics,
             "step_count": self.step_count,
             "frozen_agents": sorted(int(i) for i in self._frozen_agents),
+            "wind_accel": self.get_current_wind_accel(),
+            "wind_accel_agents": {int(aid): self.get_current_wind_accel(aid) for aid in range(self.n_agents)},
+            "wind_norm": float(np.linalg.norm(self._current_wind_accel)),
         }
         return obs, rewards, terminated, truncated, info
