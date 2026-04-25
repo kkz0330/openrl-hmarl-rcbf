@@ -20,7 +20,7 @@ from hmarl_cbf.control import (
     build_diff_constraint_constants,
 )
 from hmarl_cbf.baselines import DistributedCBFBaselineController
-from hmarl_cbf.env.obstacles import copy_obstacle, normalize_obstacle, obstacle_corners
+from hmarl_cbf.env.obstacles import copy_obstacle, extract_lidar_hit_point_obstacles, normalize_obstacle, obstacle_corners
 from hmarl_cbf.eval import EpisodeTrace, EvalEpisodeStats, TrajectoryRenderer, evaluate_summary
 from hmarl_cbf.high_level import OnPolicyMAPPO
 from hmarl_cbf.skills import SkillRuntimeManager
@@ -72,6 +72,7 @@ class TrainerHooks:
     eval_render: bool = False
     eval_render_dir: str = "artifacts/eval"
     eval_render_gif: bool = False
+    eval_render_fps: int = 8
 
 
 class TrainerSyncOnPolicy:
@@ -441,6 +442,7 @@ class TrainerSyncOnPolicy:
             rect_dual_edge_cbf_enabled=bool(overrides.get("rect_dual_edge_cbf_enabled", False)),
             rect_dual_edge_proximity_distance=float(overrides.get("rect_dual_edge_proximity_distance", 0.0)),
             rect_smooth_tau=float(overrides.get("rect_smooth_tau", 0.1)),
+            lidar_cbf_top_k=int(overrides.get("lidar_cbf_top_k", self.constraint_builder.lidar_cbf_config.get("top_k", 0))),
             robust_cbf=bool(overrides.get("robust_cbf", False)),
             disturbance_accel_max=float(overrides.get("disturbance_accel_max", 0.0)),
             relative_disturbance_accel_max=float(overrides.get("relative_disturbance_accel_max", 0.0)),
@@ -584,6 +586,14 @@ class TrainerSyncOnPolicy:
             raise RuntimeError("low_policy must be a torch module for differentiable updates")
 
         overrides = dict(constraint_overrides or {})
+        obstacles_local = obstacles
+        if bool(overrides.get("lidar_obstacle_cbf_enabled", False)):
+            obstacles_local = extract_lidar_hit_point_obstacles(
+                scan=obs_low.lidar_scan,
+                max_range=float(overrides.get("obstacle_perception_range", obs_low.lidar_scan.max_range)),
+                point_radius=float(overrides.get("lidar_cbf_point_radius", 0.0)),
+                top_k=int(overrides.get("lidar_cbf_top_k", 0)) if int(overrides.get("lidar_cbf_top_k", 0)) > 0 else None,
+            )
         use_input_bounds = bool(overrides.get("use_input_bounds", True))
         if use_input_bounds:
             u_min = np.asarray(overrides.get("u_min", self.constraint_builder.u_min), dtype=np.float32).reshape(2)
@@ -596,7 +606,7 @@ class TrainerSyncOnPolicy:
         constants = build_diff_constraint_constants(
             state_i=state_i,
             neighbors=neighbors,
-            obstacles=obstacles,
+            obstacles=obstacles_local,
             d_min_agent=d_min_agent,
             d_safe_obs=d_safe_obs,
             cbf_mode=str(overrides.get("cbf_mode", "distributed_ecbf")),
@@ -828,6 +838,7 @@ class TrainerSyncOnPolicy:
                     teacher_actions, _ = self.teacher_baseline_controller.solve_batch(
                         states=active_states,
                         obstacles=self.env.get_obstacles(),
+                        obs_low=active_obs_low,
                     )
                 for aid, teacher_action in teacher_actions.items():
                     low_step_stats.setdefault(aid, {})
@@ -1624,7 +1635,11 @@ class TrainerSyncOnPolicy:
                 )
                 out_dir = self.hooks.eval_render_dir
                 if bool(self.hooks.eval_render_gif):
-                    renderer.render_gif(trace, f"{out_dir}/episode_{ep:03d}.gif")
+                    renderer.render_gif(
+                        trace,
+                        f"{out_dir}/episode_{ep:03d}.gif",
+                        fps=max(1, int(self.hooks.eval_render_fps)),
+                    )
                 else:
                     renderer.render_static(trace, f"{out_dir}/episode_{ep:03d}.png")
 

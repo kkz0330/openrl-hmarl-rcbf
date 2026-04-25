@@ -49,6 +49,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--low-ppo-epochs", type=int, default=-1, help="Override low-level PPO epochs.")
     parser.add_argument("--low-policy-action-std", type=float, default=-1.0, help="Override low-level action std.")
     parser.add_argument("--eval-episodes", type=int, default=1, help="Periodic evaluation episodes during training.")
+    parser.add_argument("--fps", type=int, default=8, help="GIF fps for periodic/final rendered evaluation media.")
     parser.add_argument(
         "--video-interval",
         type=int,
@@ -196,6 +197,28 @@ def _set_low_entropy_coef(trainer: TrainerSyncOnPolicy, train_cfg: Dict[str, Any
         coef = start + (end - start) * alpha
     trainer.hooks.low_ppo_entropy_coef = float(coef)
     return float(coef)
+
+
+def _set_low_cbf_slack_schedule(trainer: TrainerSyncOnPolicy, cfg: Dict[str, Any], itr: int, total_iterations: int) -> float:
+    low_qp_cfg = dict(cfg.get("low_level_qp", {}))
+    train_cfg = dict(cfg.get("train", {}))
+    default_slack = float(low_qp_cfg.get("cbf_slack_max", trainer.low_policy.cbf_slack_max_value))
+    start = float(train_cfg.get("low_cbf_slack_max_start", default_slack))
+    end = float(train_cfg.get("low_cbf_slack_max_end", default_slack))
+    anneal_iters = int(train_cfg.get("low_cbf_slack_anneal_iters", 0))
+
+    if anneal_iters <= 0:
+        slack = default_slack
+    elif anneal_iters == 1:
+        slack = end
+    elif itr <= anneal_iters:
+        alpha = min(1.0, max(0.0, float(itr - 1) / float(anneal_iters - 1)))
+        slack = start + (end - start) * alpha
+    else:
+        slack = end
+
+    trainer.low_policy.set_cbf_slack_max(float(slack))
+    return float(trainer.low_policy.cbf_slack_max_value)
 
 
 def _set_low_update_mode_schedule(trainer: TrainerSyncOnPolicy, train_cfg: Dict[str, Any], itr: int) -> str:
@@ -362,7 +385,13 @@ def _warmstart_low_policy_hfg(
     }
 
 
-def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, deterministic_eval: bool) -> tuple[TrainerSyncOnPolicy, Any, Any]:
+def _build_trainer(
+    cfg: Dict[str, Any],
+    seed: int,
+    eval_episodes: int,
+    deterministic_eval: bool,
+    eval_render_fps: int,
+) -> tuple[TrainerSyncOnPolicy, Any, Any]:
     env = MultiUAV2DEnv(**cfg["env"])
     obs, _ = env.reset(seed=seed)
     agent_id = sorted(obs.keys())[0]
@@ -422,6 +451,16 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         d_safe_obs=float(cfg["safety"]["d_safe_obs"]),
         u_min=[-action_limit, -action_limit],
         u_max=[action_limit, action_limit],
+        lidar_cbf_config={
+            "use_fitted_geometry": bool(cfg["env"].get("lidar_cbf_use_fitted_geometry", False)),
+            "point_radius": float(cfg["env"].get("lidar_cbf_point_radius", 0.0)),
+            "top_k": int(cfg["env"].get("lidar_cbf_top_k", 3)),
+            "min_segment_points": int(cfg["env"].get("lidar_cbf_min_segment_points", 2)),
+            "line_fit_max_residual": float(cfg["env"].get("lidar_cbf_line_fit_max_residual", 0.08)),
+            "circle_fit_max_residual": float(cfg["env"].get("lidar_cbf_circle_fit_max_residual", 0.08)),
+            "circle_radius_min": float(cfg["env"].get("lidar_cbf_circle_radius_min", 0.05)),
+            "circle_radius_max": float(cfg["env"].get("lidar_cbf_circle_radius_max", 100.0)),
+        },
     )
     qp_solver = DifferentiableQPSolver(
         action_dim=int(cfg["model"]["action_dim"]),
@@ -432,6 +471,7 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
     )
     teacher_baseline_cfg = DistributedCBFBaselineConfig.from_mapping(
         {
+            "nominal_mode": cfg.get("teacher_baseline", {}).get("nominal_mode", "lqr"),
             "cbf_mode": cfg["skills"]["params"].get("cbf_mode", "distributed_gcbfplus"),
             "cbf_share_agent": cfg["skills"]["params"].get("cbf_share_agent", 0.5),
             "cbf_share_obs": cfg["skills"]["params"].get("cbf_share_obs", 1.0),
@@ -452,6 +492,22 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
             "speed_kp": cfg.get("teacher_baseline", {}).get("speed_kp", 1.2),
             "slow_radius": cfg["skills"]["params"].get("slow_radius", 1.5),
             "goal_stop_min_speed": cfg["skills"]["params"].get("goal_stop_min_speed", 0.0),
+            "lqr_q_pos": cfg.get("teacher_baseline", {}).get("lqr_q_pos", 5.0),
+            "lqr_q_vel": cfg.get("teacher_baseline", {}).get("lqr_q_vel", 5.0),
+            "lqr_r_input": cfg.get("teacher_baseline", {}).get("lqr_r_input", 1.0),
+            "lqr_error_clip_radius": cfg.get(
+                "teacher_baseline", {}
+            ).get("lqr_error_clip_radius", cfg["env"].get("lidar_range", 3.0)),
+            "dt": cfg["env"].get("dt", 0.03),
+            "velocity_limit": cfg["env"].get("velocity_limit", 2.0),
+            "mpc_horizon": cfg.get("teacher_baseline", {}).get("mpc_horizon", 12),
+            "mpc_q_pos": cfg.get("teacher_baseline", {}).get("mpc_q_pos", 6.0),
+            "mpc_q_vel": cfg.get("teacher_baseline", {}).get("mpc_q_vel", 0.8),
+            "mpc_q_terminal_pos": cfg.get("teacher_baseline", {}).get("mpc_q_terminal_pos", 10.0),
+            "mpc_q_terminal_vel": cfg.get("teacher_baseline", {}).get("mpc_q_terminal_vel", 1.0),
+            "mpc_r_input": cfg.get("teacher_baseline", {}).get("mpc_r_input", 0.15),
+            "mpc_obs_extra_margin": cfg.get("teacher_baseline", {}).get("mpc_obs_extra_margin", 0.0),
+            "mpc_obs_constraint_horizon": cfg.get("teacher_baseline", {}).get("mpc_obs_constraint_horizon", 6),
             "neighbor_radius": cfg["env"].get("neighbor_radius", 2.0),
             "obstacle_range": cfg["env"].get("lidar_range", 3.0),
             "boundary_cbf": cfg.get("safety", {}).get("boundary_cbf", True),
@@ -466,6 +522,38 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
             "rect_dual_edge_cbf_enabled": cfg["env"].get("rect_dual_edge_cbf_enabled", False),
             "rect_dual_edge_proximity_distance": cfg["env"].get("rect_dual_edge_proximity_distance", 0.0),
             "rect_smooth_tau": cfg["env"].get("rect_smooth_tau", 0.1),
+            "lidar_cbf_use_fitted_geometry": cfg.get("teacher_baseline", {}).get(
+                "lidar_cbf_use_fitted_geometry",
+                cfg["env"].get("lidar_cbf_use_fitted_geometry", False),
+            ),
+            "lidar_cbf_point_radius": cfg.get("teacher_baseline", {}).get(
+                "lidar_cbf_point_radius",
+                cfg["env"].get("lidar_cbf_point_radius", 0.0),
+            ),
+            "lidar_cbf_top_k": cfg.get("teacher_baseline", {}).get(
+                "lidar_cbf_top_k",
+                cfg["env"].get("lidar_cbf_top_k", 3),
+            ),
+            "lidar_cbf_min_segment_points": cfg.get("teacher_baseline", {}).get(
+                "lidar_cbf_min_segment_points",
+                cfg["env"].get("lidar_cbf_min_segment_points", 2),
+            ),
+            "lidar_cbf_line_fit_max_residual": cfg.get("teacher_baseline", {}).get(
+                "lidar_cbf_line_fit_max_residual",
+                cfg["env"].get("lidar_cbf_line_fit_max_residual", 0.08),
+            ),
+            "lidar_cbf_circle_fit_max_residual": cfg.get("teacher_baseline", {}).get(
+                "lidar_cbf_circle_fit_max_residual",
+                cfg["env"].get("lidar_cbf_circle_fit_max_residual", 0.08),
+            ),
+            "lidar_cbf_circle_radius_min": cfg.get("teacher_baseline", {}).get(
+                "lidar_cbf_circle_radius_min",
+                cfg["env"].get("lidar_cbf_circle_radius_min", 0.05),
+            ),
+            "lidar_cbf_circle_radius_max": cfg.get("teacher_baseline", {}).get(
+                "lidar_cbf_circle_radius_max",
+                cfg["env"].get("lidar_cbf_circle_radius_max", 100.0),
+            ),
             "use_input_bounds": True,
         }
     )
@@ -497,6 +585,10 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
     skill_params["rect_dual_edge_cbf_enabled"] = bool(cfg["env"].get("rect_dual_edge_cbf_enabled", False))
     skill_params["rect_dual_edge_proximity_distance"] = float(cfg["env"].get("rect_dual_edge_proximity_distance", 0.0))
     skill_params["rect_smooth_tau"] = float(cfg["env"].get("rect_smooth_tau", 0.1))
+    skill_params["lidar_obstacle_cbf_enabled"] = bool(cfg["env"].get("lidar_obstacle_cbf_enabled", True))
+    skill_params["obstacle_perception_range"] = float(cfg["env"].get("lidar_range", 3.0))
+    skill_params["lidar_cbf_point_radius"] = float(cfg["env"].get("lidar_cbf_point_radius", 0.0))
+    skill_params["lidar_cbf_top_k"] = int(cfg["env"].get("lidar_cbf_top_k", 3))
     runtime = SkillRuntimeManager(
         skills,
         default_ctx=skill_params,
@@ -549,6 +641,7 @@ def _build_trainer(cfg: Dict[str, Any], seed: int, eval_episodes: int, determini
         eval_episodes=int(eval_episodes),
         eval_deterministic=bool(deterministic_eval),
         eval_render=False,
+        eval_render_fps=max(1, int(eval_render_fps)),
     )
     trainer = TrainerSyncOnPolicy(
         env=env,
@@ -606,6 +699,7 @@ def main() -> None:
         seed=seed,
         eval_episodes=max(1, int(args.eval_episodes)),
         deterministic_eval=bool(args.deterministic_eval),
+        eval_render_fps=max(1, int(args.fps)),
     )
     trainer.set_training_scene_sampler(_FixedSceneMixer(cfg))
 
@@ -660,6 +754,7 @@ def main() -> None:
         curriculum_stage = _set_training_curriculum_stage(trainer, cfg, itr)
         high_entropy_coef = _set_high_entropy_coef(trainer, cfg["train"], itr, display_total_iterations)
         low_entropy_coef = _set_low_entropy_coef(trainer, cfg["train"], itr, display_total_iterations)
+        low_cbf_slack_max = _set_low_cbf_slack_schedule(trainer, cfg, itr, display_total_iterations)
         low_update_mode_stage = _set_low_update_mode_schedule(trainer, cfg["train"], itr)
         rollout = trainer.collect_rollout()
         _restore_full_training_env(trainer)
@@ -678,6 +773,7 @@ def main() -> None:
             "conv_eval_success_delta_w5": float("nan"),
             "high_entropy_coef": float(high_entropy_coef),
             "low_entropy_coef": float(low_entropy_coef),
+            "low_cbf_slack_max": float(low_cbf_slack_max),
             "low_reference_pretrain_stage": float(
                 1.0 if str(low_update_mode_stage).strip().lower() in {"reference_regression", "reference_pretrain"} else 0.0
             ),
@@ -724,6 +820,7 @@ def main() -> None:
                 f"skillH={row['skill_entropy_norm']:.4f} "
                 f"low_actor={row['loss_low_actor']:.4f} "
                 f"low_entropy={row['low_entropy']:.4f} "
+                f"cbf_slack_cap={row['low_cbf_slack_max']:.4f} "
                 f"loss_slack={float(low.get('loss_slack', 0.0)):.4f} "
                 f"Fx={row['low_f_mean_x']:.3f} "
                 f"Fy={row['low_f_mean_y']:.3f} "

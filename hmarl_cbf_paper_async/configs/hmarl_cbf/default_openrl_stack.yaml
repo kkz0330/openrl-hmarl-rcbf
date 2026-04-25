@@ -1,0 +1,344 @@
+seed: 42
+
+env:
+  n_agents: 4
+  n_obstacles: 4
+  world_size: 10.0
+  dt: 0.1
+  horizon: 200
+  action_limit: 2.0
+  velocity_limit: 2.0
+  agent_radius: 0.1
+  goal_threshold: 0.3
+  goal_speed_threshold: 0.1
+  lidar_beams: 32
+  lidar_range: 3.0
+  lidar_noise_std: 0.0
+  lidar_obstacle_cbf_enabled: true
+  lidar_cbf_use_fitted_geometry: true
+  lidar_cbf_point_radius: 0.0
+  lidar_cbf_top_k: 3
+  lidar_cbf_min_segment_points: 2
+  lidar_cbf_line_fit_max_residual: 0.08
+  lidar_cbf_circle_fit_max_residual: 0.08
+  lidar_cbf_circle_radius_min: 0.05
+  lidar_cbf_circle_radius_max: 100.0
+  neighbor_radius: 3.0
+  max_neighbors: 4
+  min_start_goal_separation: 1.0
+  min_agent_separation: 0.8
+  min_obstacle_clearance: 0.4
+  terminate_on_collision: true
+  reward_progress_weight: 0.5
+  reward_time_penalty: 0.01
+  reward_reach_bonus: 5.0
+  reward_collision_penalty: 3.0
+  reward_oob_penalty: 2.5
+  initial_speed_toward_goal: 0.0
+  disturbance_enabled: true
+  disturbance_accel_max: 0.2
+  disturbance_shared_across_agents: true
+  disturbance_hold_steps: 1
+  obstacle_rect_prob: 0.35
+  obstacle_circle_radius_min: 0.4
+  obstacle_circle_radius_max: 4.0
+  obstacle_rect_half_extent_min: 0.45
+  obstacle_rect_half_extent_max: 2.0
+  obstacle_rect_yaw_max: 3.14159
+  obstacle_allow_outside_world: false
+  rect_base_margin_extra: 0.0
+  rect_corner_margin_enabled: false
+  rect_corner_margin_max: 0.0
+  rect_corner_proximity_distance: 0.0
+  rect_corner_speed_min: 0.0
+  rect_corner_alignment_power: 1.0
+  rect_dual_edge_cbf_enabled: false
+  rect_dual_edge_proximity_distance: 0.0
+  rect_smooth_tau: 0.0
+
+synchronization:
+  mode: async
+  t_sync_max: 10
+
+sync:
+  mode: async
+  t_sync_max: 10
+
+safety:
+  d_min_agent: 0.3
+  d_safe_obs: 0.3
+  robust_cbf: true
+  relative_disturbance_accel_max: 0.0
+  boundary_cbf: false
+  boundary_margin: 0.3
+
+skills:
+  names: ["turn_left", "turn_right", "accelerate", "decelerate", "cruise"]
+  default_max_duration: 10
+  params:
+    goal_threshold: 0.3
+    goal_speed_threshold: 0.1
+    action_limit: 2.0
+    turn_min_speed: 0.05
+    turn_target_angle: 0.6
+    turn_heading_tol: 0.1
+    turn_keep_speed: false
+    turn_vmag: 1.1
+    turn_track_kp: 2.0
+    target_speed: 1.4
+    accelerate_mode: velocity_increment
+    accelerate_delta_speed: 0.3
+    accelerate_stop_eps: 0.05
+    accelerate_heading_blend: 0.0
+    decelerate_init_min_speed: 0.1
+    decelerate_target_speed: 0.05
+    decelerate_delta_speed: 0.3
+    decelerate_mode: velocity_decrement
+    decelerate_stop_eps: 0.05
+    decelerate_kv: 1.5
+    cruise_min_speed: 0.2
+    ref_speed: 1.2
+    slow_radius: 1.5
+    goal_stop_min_speed: 0.0
+    d_min_agent: 0.3
+    d_safe_obs: 0.3
+    cbf_mode: distributed_gcbfplus
+    cbf_share_agent: 0.5
+    cbf_share_obs: 1.0
+    use_input_bounds: true
+    rect_base_margin_extra: 0.0
+    rect_corner_margin_enabled: false
+    rect_corner_margin_max: 0.0
+    rect_corner_proximity_distance: 0.0
+    rect_corner_speed_min: 0.0
+    rect_corner_alignment_power: 1.0
+    rect_dual_edge_cbf_enabled: false
+    rect_dual_edge_proximity_distance: 0.0
+    rect_smooth_tau: 0.0
+    w_accel: 0.05
+    w_turn: 0.03
+    w_speed_dev: 0.04
+    w_heading_dev: 0.02
+    w_progress: 0.02
+    w_goal_dist_pen: 0.02
+
+model:
+  high_hidden_dim: 128
+  low_hidden_dim: 128
+  action_dim: 2
+
+low_level_qp:
+  h_diag_min: 0.01
+  h_diag_max: 20.0
+  h_offdiag_abs_max: 2.0
+  f_abs_max: 8.0
+  f_residual_reference_enabled: true
+  f_ref_speed: 1.2
+  f_ref_kp: 1.2
+  f_ref_slow_radius: 1.5
+  f_ref_goal_stop_min_speed: 0.0
+  phi_log_std_min: -5.0
+  phi_log_std_max: -1.5
+  w_clf: 10.0
+  w_cbf: 100.0
+  cbf_slack_max: 1.0
+  cbf_k0: 1.0
+  cbf_k0_min: 1.0
+  cbf_k0_max: 1.0
+  cbf_k1: 1.0
+  cbf_k1_min: 1.0
+  cbf_k1_max: 1.0
+  clf_k: 1.0
+  clf_k_min: 1.0
+  clf_k_max: 1.0
+  hocbf_gamma_h: 1.0
+  hocbf_gamma_h_min: 1.0
+  hocbf_gamma_h_max: 1.0
+  hocbf_gamma_hdot: 1.0
+  hocbf_gamma_hdot_min: 1.0
+  hocbf_gamma_hdot_max: 1.0
+  d_min_agent_min: 0.3
+  d_min_agent_max: 0.3
+  d_safe_obs_min: 0.3
+  d_safe_obs_max: 0.3
+
+teacher_baseline:
+  nominal_mode: gcbf_lqr
+  use_clf: false
+  dt: 0.1
+  d_min_agent: 0.1
+  d_safe_obs: 0.1
+  relax_penalty: 1000.0
+  cbf_slack_max: 1000000.0
+  boundary_cbf: false
+  prefilter_neighbors: false
+  prefilter_obstacles_top_k: false
+  gcbf_mass: 1.0
+  gcbf_comm_radius: 3.0
+  neighbor_radius: 3.0
+  obstacle_range: 3.0
+  velocity_limit: 2.0
+  lidar_cbf_point_radius: 0.0
+  lidar_cbf_top_k: 3
+  speed_kp: 1.2
+  lqr_q_pos: 5.0
+  lqr_q_vel: 5.0
+  lqr_r_input: 1.0
+  lqr_error_clip_radius: 3.0
+  mpc_horizon: 12
+  mpc_q_pos: 6.0
+  mpc_q_vel: 0.8
+  mpc_q_terminal_pos: 10.0
+  mpc_q_terminal_vel: 1.0
+  mpc_r_input: 0.15
+  mpc_obs_extra_margin: 0.0
+  mpc_obs_constraint_horizon: 6
+
+train:
+  rollout_steps: 200
+  gamma_high: 0.99
+  lam_high: 0.95
+  gamma_low: 0.99
+  high_option_progress_coef: 0.5
+  high_option_boundary_recovery_coef: 0.0
+  high_option_boundary_threshold: 0.0
+  high_option_trap_relief_coef: 0.8
+  high_option_trap_enter_coef: 0.6
+  high_option_stuck_penalty_coef: 0.5
+  high_option_stuck_blocked_threshold: 0.5
+  high_option_stuck_progress_threshold: 0.15
+  high_option_stuck_speed_threshold: 0.2
+  high_trap_blocked_lookahead: 4.0
+  high_trap_blocked_lateral_window: 3.0
+  high_trap_blocked_extra_margin: 0.15
+
+teacher_pretrain:
+  default_skill_id: 2
+  hidden_dim: 128
+  include_local_obs_in_critic: false
+
+openrl_train:
+  max_low_steps_per_high_step: 0
+  freeze_on_reach: true
+
+openrl_joint_train:
+  episodes: 50
+  log_every: 20
+  seed: 0
+  torch_device: cpu
+  low_init_checkpoint: artifacts/openrl/stack_run/low_teacher_warmstart.pt
+  high_init_checkpoint: ""
+  max_high_steps_per_episode: 0
+  low_deterministic_rollout: false
+  high_deterministic_rollout: false
+  low_actor_lr: 0.0003
+  low_critic_lr: 0.0003
+  low_clip_ratio: 0.2
+  low_value_coef: 0.5
+  low_entropy_coef: 0.0
+  low_max_grad_norm: 0.5
+  low_ppo_epochs: 2
+  low_gamma: 0.99
+  low_gae_lambda: 0.95
+  low_normalize_advantages: false
+  low_slack_coef: 0.02
+  low_cbf_slack_coef: 0.05
+  low_ext_reward_coef: 0.0
+  low_reward_mix_eta: 0.35
+  low_divide_high_adv_by_n_agents: true
+  low_reset_on_sync_switch: true
+  low_safety_margin_coef: 0.0
+  low_safety_margin_h_agent: 0.0
+  low_safety_margin_h_obstacle: 0.0
+  high_actor_lr: 0.0003
+  high_critic_lr: 0.0003
+  high_clip_ratio: 0.2
+  high_value_coef: 0.5
+  high_entropy_coef: 0.01
+  high_max_grad_norm: 0.5
+  high_ppo_epochs: 4
+  high_minibatch_size: 64
+  high_gamma: 0.99
+  high_gae_lambda: 0.95
+  high_normalize_advantages: false
+  checkpoint_dir: artifacts/openrl/stack_run/joint
+  checkpoint_every: 0
+  metrics_json: artifacts/openrl/stack_run/joint_metrics.json
+  metrics_jsonl: artifacts/openrl/stack_run/joint_metrics.jsonl
+
+openrl_stack_train:
+  seed: 0
+  log_every: 20
+  torch_device: cpu
+  artifacts_dir: artifacts/openrl/stack_run
+  skip_teacher_warmstart: false
+  teacher_source: model_checkpoint
+  teacher_checkpoint: artifacts/hmarl_cbf_paper_async/phi_ppo_async_trapaware_stuck_rcbf_lidarpointcbf_topk_hardresume_round2/checkpoints/last.pt
+  teacher_episodes: 8
+  teacher_max_steps_per_episode: 0
+  teacher_skill_selection_mode: cyclic
+  teacher_pretrain_epochs: 5
+  teacher_high_pretrain_epochs: 5
+  teacher_high_actor_lr: 0.0003
+  teacher_high_entropy_coef: 0.0
+  teacher_high_max_grad_norm: 0.5
+  teacher_slack_coef: 0.02
+  teacher_cbf_slack_coef: 0.05
+  teacher_entropy_coef: 0.0
+  teacher_max_grad_norm: 0.5
+  low_deterministic_rollout: false
+  low_actor_lr: 0.0003
+  low_critic_lr: 0.0003
+  low_clip_ratio: 0.2
+  low_value_coef: 0.5
+  low_entropy_coef: 0.0
+  low_max_grad_norm: 0.5
+  low_ppo_epochs: 2
+  low_gamma: 0.99
+  low_gae_lambda: 0.95
+  low_normalize_advantages: false
+  low_slack_coef: 0.02
+  low_cbf_slack_coef: 0.05
+  high_episodes: 50
+  high_deterministic_rollout: false
+  high_actor_lr: 0.0003
+  high_critic_lr: 0.0003
+  high_clip_ratio: 0.2
+  high_value_coef: 0.5
+  high_entropy_coef: 0.01
+  high_max_grad_norm: 0.5
+  high_ppo_epochs: 4
+  high_minibatch_size: 64
+  high_gamma: 0.99
+  high_gae_lambda: 0.95
+  high_normalize_advantages: false
+  high_checkpoint_every: 0
+  metrics_json: artifacts/openrl/stack_run/stack_metrics.json
+
+openrl_eval:
+  low_checkpoint: artifacts/openrl/stack_run/joint/low_final.pt
+  high_checkpoint: artifacts/openrl/stack_run/joint/high_final.pt
+  episodes: 5
+  seed: 0
+  torch_device: cpu
+  deterministic: true
+  output_root: artifacts/openrl_eval
+  run_name: eval_stack_run
+  render_gif: false
+  render_png: false
+  render_episodes: 1
+  fps: 8
+  summary_json: artifacts/openrl_eval/eval_stack_run_summary.json
+
+openrl_teacher_eval:
+  episodes: 5
+  seed: 0
+  teacher_source: model_checkpoint
+  teacher_checkpoint: artifacts/hmarl_cbf_paper_async/phi_ppo_async_trapaware_stuck_rcbf_lidarpointcbf_topk_hardresume_round2/checkpoints/last.pt
+  output_root: artifacts/openrl_eval
+  run_name: eval_teacher_baseline
+  render_gif: false
+  render_png: false
+  render_episodes: 1
+  fps: 8
+  summary_json: artifacts/openrl_eval/eval_teacher_baseline_summary.json

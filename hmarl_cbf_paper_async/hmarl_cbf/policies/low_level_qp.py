@@ -94,6 +94,14 @@ class LowLevelQPPolicy(nn.Module):  # type: ignore[misc]
         self.register_buffer("_fixed_hocbf_gamma_h", torch.tensor([float(hocbf_gamma_h)], dtype=torch.float32))
         self.register_buffer("_fixed_hocbf_gamma_hdot", torch.tensor([float(hocbf_gamma_hdot)], dtype=torch.float32))
 
+    @property
+    def cbf_slack_max_value(self) -> float:
+        return float(self._fixed_cbf_slack_max.item())
+
+    def set_cbf_slack_max(self, value: float) -> None:
+        value_f = max(0.0, float(value))
+        self._fixed_cbf_slack_max.fill_(value_f)
+
     def _encode(self, obs_low: Tensor, skill_id: Tensor) -> Tensor:
         skill_feat = self.skill_embedding(skill_id)
         obs_feat = self.obs_encoder(obs_low)

@@ -15,6 +15,7 @@ from hmarl_cbf.env.lidar import LidarModel
 from hmarl_cbf.env.obstacles import (
     copy_obstacle,
     disk_collides_with_obstacle,
+    disk_swept_collides_with_obstacle,
     normalize_obstacles,
     obstacle_obstacle_clearance,
     obstacle_surface_distance,
@@ -66,6 +67,15 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         disturbance_accel_max: float = 0.0,
         disturbance_shared_across_agents: bool = True,
         disturbance_hold_steps: int = 1,
+        lidar_obstacle_cbf_enabled: bool = True,
+        lidar_cbf_use_fitted_geometry: bool = False,
+        lidar_cbf_point_radius: float = 0.0,
+        lidar_cbf_top_k: int = 3,
+        lidar_cbf_min_segment_points: int = 2,
+        lidar_cbf_line_fit_max_residual: float = 0.08,
+        lidar_cbf_circle_fit_max_residual: float = 0.08,
+        lidar_cbf_circle_radius_min: float = 0.05,
+        lidar_cbf_circle_radius_max: float = 100.0,
         rect_base_margin_extra: float = 0.0,
         rect_corner_margin_enabled: bool = False,
         rect_corner_margin_max: float = 0.0,
@@ -111,6 +121,15 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
         self.disturbance_accel_max = float(max(0.0, disturbance_accel_max))
         self.disturbance_shared_across_agents = bool(disturbance_shared_across_agents)
         self.disturbance_hold_steps = int(max(1, disturbance_hold_steps))
+        self.lidar_obstacle_cbf_enabled = bool(lidar_obstacle_cbf_enabled)
+        self.lidar_cbf_use_fitted_geometry = bool(lidar_cbf_use_fitted_geometry)
+        self.lidar_cbf_point_radius = float(max(0.0, lidar_cbf_point_radius))
+        self.lidar_cbf_top_k = int(max(0, lidar_cbf_top_k))
+        self.lidar_cbf_min_segment_points = int(max(1, lidar_cbf_min_segment_points))
+        self.lidar_cbf_line_fit_max_residual = float(max(0.0, lidar_cbf_line_fit_max_residual))
+        self.lidar_cbf_circle_fit_max_residual = float(max(0.0, lidar_cbf_circle_fit_max_residual))
+        self.lidar_cbf_circle_radius_min = float(max(0.0, lidar_cbf_circle_radius_min))
+        self.lidar_cbf_circle_radius_max = float(max(self.lidar_cbf_circle_radius_min, lidar_cbf_circle_radius_max))
         self.rect_base_margin_extra = float(max(0.0, rect_base_margin_extra))
         self.rect_corner_margin_enabled = bool(rect_corner_margin_enabled)
         self.rect_corner_margin_max = float(max(0.0, rect_corner_margin_max))
@@ -342,17 +361,40 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
     def unfreeze_all_agents(self) -> None:
         self._frozen_agents.clear()
 
-    def collision_mask(self) -> Dict[int, bool]:
+    def collision_mask(self, prev_positions: Dict[int, np.ndarray] | None = None) -> Dict[int, bool]:
         flags = {i: False for i in range(self.n_agents)}
         for i in range(self.n_agents):
             for j in range(i + 1, self.n_agents):
-                dist = np.linalg.norm(self._states[i].position - self._states[j].position)
-                if dist <= (self._states[i].radius + self._states[j].radius):
+                if prev_positions is None:
+                    dist = np.linalg.norm(self._states[i].position - self._states[j].position)
+                    collided = bool(dist <= (self._states[i].radius + self._states[j].radius))
+                else:
+                    rel_start = np.asarray(prev_positions[i], dtype=np.float32) - np.asarray(prev_positions[j], dtype=np.float32)
+                    rel_end = np.asarray(self._states[i].position, dtype=np.float32) - np.asarray(self._states[j].position, dtype=np.float32)
+                    radius_sum = float(self._states[i].radius + self._states[j].radius)
+                    seg = rel_end - rel_start
+                    denom = float(np.dot(seg, seg))
+                    if denom <= 1e-10:
+                        collided = bool(np.linalg.norm(rel_end) <= radius_sum)
+                    else:
+                        alpha = float(np.clip(-np.dot(rel_start, seg) / denom, 0.0, 1.0))
+                        closest = rel_start + alpha * seg
+                        collided = bool(np.linalg.norm(closest) <= radius_sum)
+                if collided:
                     flags[i] = True
                     flags[j] = True
         for i in range(self.n_agents):
             for obs in self._obstacles:
-                if disk_collides_with_obstacle(self._states[i].position, self._states[i].radius, obs):
+                if prev_positions is None:
+                    collided = disk_collides_with_obstacle(self._states[i].position, self._states[i].radius, obs)
+                else:
+                    collided = disk_swept_collides_with_obstacle(
+                        prev_positions[i],
+                        self._states[i].position,
+                        self._states[i].radius,
+                        obs,
+                    )
+                if collided:
                     flags[i] = True
         return flags
 
@@ -365,13 +407,17 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
             for s in self._states
         }
 
-    def unsafe_mask(self) -> Dict[int, bool]:
-        collision = self.collision_mask()
-        oob = self._out_of_bounds_flags()
+    def unsafe_mask(
+        self,
+        collision: Dict[int, bool] | None = None,
+        oob: Dict[int, bool] | None = None,
+    ) -> Dict[int, bool]:
+        collision = self.collision_mask() if collision is None else collision
+        oob = self._out_of_bounds_flags() if oob is None else oob
         return {i: bool(collision[i] or oob[i]) for i in range(self.n_agents)}
 
-    def get_cost(self) -> Dict[int, float]:
-        unsafe = self.unsafe_mask()
+    def get_cost(self, unsafe: Dict[int, bool] | None = None) -> Dict[int, float]:
+        unsafe = self.unsafe_mask() if unsafe is None else unsafe
         return {i: (1.0 if unsafe[i] else 0.0) for i in range(self.n_agents)}
 
     def _collect_safety_metrics(
@@ -438,6 +484,10 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
             state.agent_id: float(np.linalg.norm(state.goal - state.position))
             for state in self._states
         }
+        prev_positions = {
+            state.agent_id: np.asarray(state.position, dtype=np.float32).copy()
+            for state in self._states
+        }
 
         for state in self._states:
             if state.agent_id in self._frozen_agents:
@@ -449,11 +499,11 @@ class MultiUAV2DEnv(gym.Env if gym is not None else object):  # type: ignore[mis
             state.velocity = np.clip(state.velocity + accel_total * self.dt, -self.velocity_limit, self.velocity_limit)
             state.position = state.position + state.velocity * self.dt
 
-        collision = self.collision_mask()
+        collision = self.collision_mask(prev_positions=prev_positions)
         reach = self.finish_mask()
-        unsafe = self.unsafe_mask()
         out_of_bounds = self._out_of_bounds_flags()
-        costs = self.get_cost()
+        unsafe = self.unsafe_mask(collision=collision, oob=out_of_bounds)
+        costs = self.get_cost(unsafe=unsafe)
 
         rewards: Dict[int, float] = {}
         for i in range(self.n_agents):

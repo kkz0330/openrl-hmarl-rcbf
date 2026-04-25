@@ -9,6 +9,11 @@ import numpy as np
 TensorLike = Any
 
 
+LIDAR_HIT_NONE = 0
+LIDAR_HIT_OBSTACLE = 1
+LIDAR_HIT_NEIGHBOR = 2
+
+
 def _as_vec2(value: np.ndarray | list[float] | tuple[float, ...], name: str) -> np.ndarray:
     arr = np.asarray(value, dtype=np.float32).reshape(-1)
     if arr.shape != (2,):
@@ -36,14 +41,33 @@ class AgentState:
 class LidarScan:
     ranges: np.ndarray
     max_range: float
+    angles: np.ndarray
+    origin: np.ndarray
+    hit_points: np.ndarray
+    hit_valid: np.ndarray
+    hit_kinds: np.ndarray
     noise_std: float = 0.0
 
     def __post_init__(self) -> None:
         self.ranges = np.asarray(self.ranges, dtype=np.float32).reshape(-1)
+        self.angles = np.asarray(self.angles, dtype=np.float32).reshape(-1)
+        self.origin = _as_vec2(self.origin, "origin")
+        self.hit_points = np.asarray(self.hit_points, dtype=np.float32).reshape(-1, 2)
+        self.hit_valid = np.asarray(self.hit_valid, dtype=np.bool_).reshape(-1)
+        self.hit_kinds = np.asarray(self.hit_kinds, dtype=np.int32).reshape(-1)
         if self.max_range <= 0:
             raise ValueError("max_range must be positive")
         if self.noise_std < 0:
             raise ValueError("noise_std must be >= 0")
+        n = self.ranges.shape[0]
+        if self.angles.shape[0] != n:
+            raise ValueError(f"angles must have shape ({n},), got {self.angles.shape}")
+        if self.hit_points.shape[0] != n:
+            raise ValueError(f"hit_points must have shape ({n}, 2), got {self.hit_points.shape}")
+        if self.hit_valid.shape[0] != n:
+            raise ValueError(f"hit_valid must have shape ({n},), got {self.hit_valid.shape}")
+        if self.hit_kinds.shape[0] != n:
+            raise ValueError(f"hit_kinds must have shape ({n},), got {self.hit_kinds.shape}")
 
     @property
     def normalized(self) -> np.ndarray:
@@ -132,6 +156,8 @@ class QPParam:
     clf_k: TensorLike
     hocbf_gamma_h: TensorLike | None = None
     hocbf_gamma_hdot: TensorLike | None = None
+    d_min_agent: TensorLike | None = None
+    d_safe_obs: TensorLike | None = None
 
 
 @dataclass(slots=True)

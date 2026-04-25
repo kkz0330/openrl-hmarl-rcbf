@@ -246,6 +246,10 @@ def _build_trainer(
         d_safe_obs=float(cfg["safety"]["d_safe_obs"]),
         u_min=[-action_limit, -action_limit],
         u_max=[action_limit, action_limit],
+        lidar_cbf_config={
+            "point_radius": float(cfg["env"].get("lidar_cbf_point_radius", 0.0)),
+            "top_k": int(cfg["env"].get("lidar_cbf_top_k", 3)),
+        },
     )
     qp_solver = DifferentiableQPSolver(
         action_dim=int(cfg["model"]["action_dim"]),
@@ -268,6 +272,10 @@ def _build_trainer(
     skill_params["relative_disturbance_accel_max"] = float(
         cfg.get("safety", {}).get("relative_disturbance_accel_max", 0.0)
     )
+    skill_params["lidar_obstacle_cbf_enabled"] = bool(cfg["env"].get("lidar_obstacle_cbf_enabled", True))
+    skill_params["obstacle_perception_range"] = float(cfg["env"].get("lidar_range", 3.0))
+    skill_params["lidar_cbf_point_radius"] = float(cfg["env"].get("lidar_cbf_point_radius", 0.0))
+    skill_params["lidar_cbf_top_k"] = int(cfg["env"].get("lidar_cbf_top_k", 3))
     runtime = SkillRuntimeManager(skills, default_ctx=skill_params)
     low_controller = LowLevelSafeController(
         low_policy=low_policy,

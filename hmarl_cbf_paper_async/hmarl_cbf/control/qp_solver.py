@@ -28,6 +28,125 @@ def _symmetrize_spd_numpy(H: np.ndarray) -> np.ndarray:
     return (eigvecs @ np.diag(eigvals) @ eigvecs.T).astype(np.float32)
 
 
+def _nominal_action(problem: QPProblem, action_dim: int) -> np.ndarray:
+    H_mat = _symmetrize_spd_numpy(np.asarray(problem.H_mat, dtype=np.float32).reshape(action_dim, action_dim))
+    f_lin = np.asarray(problem.f_lin, dtype=np.float32).reshape(-1)
+    try:
+        action = -np.linalg.solve(H_mat, f_lin).astype(np.float32)
+    except np.linalg.LinAlgError:
+        action = -np.linalg.pinv(H_mat).dot(f_lin).astype(np.float32)
+    return np.clip(action, np.asarray(problem.u_min, dtype=np.float32), np.asarray(problem.u_max, dtype=np.float32))
+
+
+def _top_constraint_indices(A: np.ndarray, b: np.ndarray, action: np.ndarray, top_k: int) -> np.ndarray:
+    if A.size == 0 or top_k <= 0:
+        return np.zeros((0,), dtype=np.int32)
+    scores = (A @ action.reshape(-1) - b.reshape(-1)).astype(np.float32)
+    order = np.argsort(scores)[::-1]
+    keep = order[: min(int(top_k), int(order.shape[0]))]
+    return np.sort(keep.astype(np.int32))
+
+
+def solve_reduced_fallback_qp(
+    problem: QPProblem,
+    *,
+    action_dim: int,
+    ecos_max_iters: int,
+    scs_max_iters: int,
+    scs_eps: float,
+    top_cbf: int = 4,
+    top_clf: int = 1,
+) -> QPSolution:
+    action_guess = _nominal_action(problem, action_dim=action_dim)
+    A_cbf = np.asarray(problem.A_cbf, dtype=np.float32).reshape(-1, action_dim)
+    b_cbf = np.asarray(problem.b_cbf, dtype=np.float32).reshape(-1)
+    A_clf = np.asarray(problem.A_clf, dtype=np.float32).reshape(-1, action_dim)
+    b_clf = np.asarray(problem.b_clf, dtype=np.float32).reshape(-1)
+    cbf_idx = _top_constraint_indices(A_cbf, b_cbf, action_guess, top_k=top_cbf)
+    clf_idx = _top_constraint_indices(A_clf, b_clf, action_guess, top_k=top_clf)
+
+    if cp is None or (A_cbf.shape[0] == 0 and A_clf.shape[0] == 0):
+        clf_violation = 0.0
+        if A_clf.size > 0:
+            clf_violation = float(max(0.0, np.max(A_clf @ action_guess - b_clf)))
+        cbf_slack = np.zeros((A_cbf.shape[0],), dtype=np.float32)
+        if A_cbf.size > 0:
+            cbf_slack = np.maximum(A_cbf @ action_guess - b_cbf, 0.0).astype(np.float32)
+        return QPSolution(
+            action=action_guess.astype(np.float32),
+            slack=np.asarray([max(problem.delta_min, clf_violation)], dtype=np.float32),
+            objective=np.asarray([0.0], dtype=np.float32),
+            feasible=True,
+            solver_status="reduced_stub",
+            cbf_slack=cbf_slack,
+        )
+
+    H_mat = _symmetrize_spd_numpy(np.asarray(problem.H_mat, dtype=np.float32).reshape(action_dim, action_dim))
+    f_lin = np.asarray(problem.f_lin, dtype=np.float32).reshape(action_dim)
+    w_clf = float(np.asarray(problem.w_clf, dtype=np.float32).reshape(-1)[0])
+    w_cbf = float(np.asarray(problem.w_cbf, dtype=np.float32).reshape(-1)[0])
+    cbf_slack_max = float(np.asarray(problem.cbf_slack_max, dtype=np.float32).reshape(-1)[0])
+    u_min = np.asarray(problem.u_min, dtype=np.float32).reshape(action_dim)
+    u_max = np.asarray(problem.u_max, dtype=np.float32).reshape(action_dim)
+
+    u = cp.Variable(action_dim)
+    delta = cp.Variable(1, nonneg=True)
+    objective = 0.5 * cp.quad_form(u, H_mat) + f_lin @ u + w_clf * cp.sum(delta)
+    constraints = [u >= u_min, u <= u_max, delta >= float(problem.delta_min)]
+
+    if cbf_idx.size > 0:
+        eps = cp.Variable(cbf_idx.size, nonneg=True)
+        objective += w_cbf * cp.sum(eps)
+        constraints.append(A_cbf[cbf_idx] @ u <= b_cbf[cbf_idx] + eps)
+        constraints.append(eps <= cbf_slack_max)
+    else:
+        eps = None
+
+    if clf_idx.size > 0:
+        constraints.append(A_clf[clf_idx] @ u <= b_clf[clf_idx] + delta)
+
+    reduced_problem = cp.Problem(cp.Minimize(objective), constraints)
+    status = "reduced_failed"
+    solved = False
+    for solver_name, solver_kwargs in (
+        ("SCS", {"max_iters": int(scs_max_iters), "eps": float(scs_eps)}),
+        ("ECOS", {"max_iters": int(ecos_max_iters)}),
+    ):
+        try:
+            reduced_problem.solve(solver=solver_name, warm_start=True, **solver_kwargs)
+        except Exception:
+            continue
+        if reduced_problem.status in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
+            status = f"reduced_{solver_name.lower()}"
+            solved = True
+            break
+
+    if not solved or u.value is None:
+        return QPSolution(
+            action=action_guess.astype(np.float32),
+            slack=np.asarray([0.0], dtype=np.float32),
+            objective=np.asarray([0.0], dtype=np.float32),
+            feasible=False,
+            solver_status=status,
+            cbf_slack=np.maximum(A_cbf @ action_guess - b_cbf, 0.0).astype(np.float32) if A_cbf.size > 0 else np.zeros((0,), dtype=np.float32),
+        )
+
+    action = np.asarray(u.value, dtype=np.float32).reshape(action_dim)
+    action = np.clip(action, u_min, u_max)
+    slack = np.asarray(delta.value if delta.value is not None else [0.0], dtype=np.float32).reshape(1)
+    cbf_slack = np.zeros((A_cbf.shape[0],), dtype=np.float32)
+    if eps is not None and eps.value is not None:
+        cbf_slack[cbf_idx] = np.asarray(eps.value, dtype=np.float32).reshape(-1)
+    return QPSolution(
+        action=action,
+        slack=slack,
+        objective=np.asarray([float(reduced_problem.value) if reduced_problem.value is not None else 0.0], dtype=np.float32),
+        feasible=True,
+        solver_status=status,
+        cbf_slack=cbf_slack,
+    )
+
+
 class DifferentiableQPSolver:
     """cvxpylayers-backed QP solver with a deterministic fallback path."""
 
@@ -178,24 +297,30 @@ class DifferentiableQPSolver:
             outputs = layer(
                 *params,
                 solver_args={
-                    "solve_method": "ECOS",
-                    "max_iters": self.ecos_max_iters,
+                    "solve_method": "SCS",
+                    "max_iters": self.scs_max_iters,
+                    "eps": self.scs_eps,
                 },
             )
-            status = "optimal"
+            status = "optimal_scs"
         except Exception:
             try:
                 outputs = layer(
                     *params,
                     solver_args={
-                        "solve_method": "SCS",
-                        "max_iters": self.scs_max_iters,
-                        "eps": self.scs_eps,
+                        "solve_method": "ECOS",
+                        "max_iters": self.ecos_max_iters,
                     },
                 )
-                status = "optimal_scs"
+                status = "optimal"
             except Exception:
-                return self._solve_stub(problem)
+                return solve_reduced_fallback_qp(
+                    problem,
+                    action_dim=self.action_dim,
+                    ecos_max_iters=self.ecos_max_iters,
+                    scs_max_iters=self.scs_max_iters,
+                    scs_eps=self.scs_eps,
+                )
 
         u_sol, delta_sol = outputs[0], outputs[1]
         eps_cbf_sol = outputs[2] if A_cbf.shape[0] > 0 and len(outputs) > 2 else None

@@ -20,24 +20,34 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise RuntimeError("PyYAML is required to load config") from exc
 
-from hmarl_cbf.baselines import DistributedCBFBaselineConfig, DistributedCBFBaselineController
-from hmarl_cbf.control import ConstraintBuilder, DifferentiableQPSolver
+from hmarl_cbf.baselines import GCBFStyleHandcraftedConfig, GCBFStyleHandcraftedController
 from hmarl_cbf.env import MultiUAV2DEnv
 from hmarl_cbf.eval import EpisodeTrace, TrajectoryRenderer
+from hmarl_cbf.scenarios import build_fixed_scene, fixed_scene_names
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run fixed-parameter distributed CBF-QP baseline (GCBF+ style) with visualization."
+        description="Evaluate a GCBF-style handcrafted CBF-QP baseline directly on the HMARL environment."
     )
-    parser.add_argument("--config", type=str, default="configs/hmarl_cbf/baseline_distributed_cbf.yaml")
+    parser.add_argument("--config", type=str, default="configs/hmarl_cbf/default_async_onpolicy_gcbfplus_trapaware_mixedrect.yaml")
     parser.add_argument("--output-root", type=str, default="artifacts/hmarl_cbf_baseline")
     parser.add_argument("--run-name", type=str, default="")
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--seed", type=int, default=-1)
-    parser.add_argument("--render-gif", action="store_true", help="Render each episode to GIF.")
-    parser.add_argument("--render-png", action="store_true", help="Render each episode to static PNG.")
-    parser.add_argument("--fps", type=int, default=8, help="GIF fps.")
+    parser.add_argument("--render-gif", action="store_true")
+    parser.add_argument("--render-png", action="store_true")
+    parser.add_argument("--fps", type=int, default=8)
+    parser.add_argument("--progress-interval", type=int, default=50)
+    parser.add_argument(
+        "--scenario",
+        type=str,
+        default="",
+        choices=[""] + fixed_scene_names(),
+        help="Optional built-in fixed scenario.",
+    )
+    parser.add_argument("--states-json", type=str, default="")
+    parser.add_argument("--obstacles-json", type=str, default="")
     return parser.parse_args()
 
 
@@ -52,7 +62,7 @@ def _make_run_dir(output_root: Path, run_name: str) -> Path:
     if run_name:
         out = output_root / run_name
     else:
-        out = output_root / time.strftime("baseline_%Y%m%d_%H%M%S")
+        out = output_root / time.strftime("gcbf_style_baseline_%Y%m%d_%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
     (out / "media").mkdir(parents=True, exist_ok=True)
     return out
@@ -95,6 +105,21 @@ def _render_episode(
     return renderer.render_static(trace, out_path)
 
 
+def _parse_fixed_scene(args: argparse.Namespace, env_cfg: Dict[str, Any]) -> Dict[str, Any] | None:
+    if args.states_json:
+        states = json.loads(args.states_json)
+        obstacles = json.loads(args.obstacles_json) if args.obstacles_json else []
+        return {"states": states, "obstacles": obstacles}
+    if args.scenario:
+        states, obstacles = build_fixed_scene(
+            args.scenario,
+            world_size=float(env_cfg["world_size"]),
+            agent_radius=float(env_cfg["agent_radius"]),
+        )
+        return {"states": states, "obstacles": obstacles}
+    return None
+
+
 def main() -> None:
     args = _parse_args()
     cfg_path = Path(args.config)
@@ -106,63 +131,60 @@ def main() -> None:
     env_cfg = dict(cfg["env"])
     env = MultiUAV2DEnv(**env_cfg)
 
-    action_limit = float(env_cfg["action_limit"])
-    constraint_builder = ConstraintBuilder(
-        d_min_agent=float(cfg["safety"]["d_min_agent"]),
-        d_safe_obs=float(cfg["safety"]["d_safe_obs"]),
-        u_min=[-action_limit, -action_limit],
-        u_max=[action_limit, action_limit],
-        lidar_cbf_config={
-            "point_radius": float(cfg["env"].get("lidar_cbf_point_radius", 0.0)),
-            "top_k": int(cfg["env"].get("lidar_cbf_top_k", 3)),
-        },
+    style_cfg = GCBFStyleHandcraftedConfig.from_mapping(
+        {
+            **cfg.get("gcbf_style_handcrafted_baseline", {}),
+            "action_limit": env_cfg["action_limit"],
+            "velocity_limit": env_cfg["velocity_limit"],
+            "car_radius": env_cfg["agent_radius"],
+            "n_rays": env_cfg["lidar_beams"],
+            "dt": env_cfg["dt"],
+            "comm_radius": cfg.get("gcbf_style_handcrafted_baseline", {}).get(
+                "comm_radius",
+                max(float(env_cfg.get("lidar_range", 3.0)), float(env_cfg.get("neighbor_radius", 3.0))),
+            ),
+        }
     )
-    qp_solver = DifferentiableQPSolver(
-        action_dim=2,
-        use_stub_if_unavailable=bool(cfg["qp"].get("use_stub_if_unavailable", True)),
-        ecos_max_iters=int(cfg["qp"].get("ecos_max_iters", 500)),
-        scs_max_iters=int(cfg["qp"].get("scs_max_iters", 10_000)),
-        scs_eps=float(cfg["qp"].get("scs_eps", 1e-4)),
-    )
-    baseline_cfg = DistributedCBFBaselineConfig.from_mapping(cfg["baseline"])
-    baseline_cfg.world_size = float(env_cfg["world_size"])
-    baseline_cfg.boundary_cbf = bool(cfg.get("safety", {}).get("boundary_cbf", True))
-    baseline_cfg.boundary_margin = float(
-        cfg.get("safety", {}).get("boundary_margin", env_cfg.get("agent_radius", 0.05))
-    )
-    baseline_cfg.robust_cbf = bool(cfg.get("safety", {}).get("robust_cbf", baseline_cfg.robust_cbf))
-    baseline_cfg.disturbance_accel_max = float(cfg["env"].get("disturbance_accel_max", baseline_cfg.disturbance_accel_max))
-    baseline_cfg.relative_disturbance_accel_max = float(
-        cfg.get("safety", {}).get("relative_disturbance_accel_max", baseline_cfg.relative_disturbance_accel_max)
-    )
-    baseline_cfg.lidar_cbf_point_radius = float(cfg["env"].get("lidar_cbf_point_radius", baseline_cfg.lidar_cbf_point_radius))
-    baseline_cfg.lidar_cbf_top_k = int(cfg["env"].get("lidar_cbf_top_k", baseline_cfg.lidar_cbf_top_k))
-    baseline = DistributedCBFBaselineController(
-        constraint_builder=constraint_builder,
-        qp_solver=qp_solver,
-        config=baseline_cfg,
-    )
+    baseline = GCBFStyleHandcraftedController(style_cfg)
 
     run_dir = _make_run_dir(Path(args.output_root), args.run_name)
-    (run_dir / "config_snapshot.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    snapshot = dict(cfg)
+    snapshot["gcbf_style_handcrafted_baseline"] = {
+        "alpha": float(style_cfg.alpha),
+        "k": int(style_cfg.k),
+        "action_limit": float(style_cfg.action_limit),
+        "velocity_limit": float(style_cfg.velocity_limit),
+        "comm_radius": float(style_cfg.comm_radius),
+        "car_radius": float(style_cfg.car_radius),
+        "n_rays": int(style_cfg.n_rays),
+        "mass": float(style_cfg.mass),
+        "dt": float(style_cfg.dt),
+        "q_pos": float(style_cfg.q_pos),
+        "q_vel": float(style_cfg.q_vel),
+        "r_input": float(style_cfg.r_input),
+        "relax_penalty": float(style_cfg.relax_penalty),
+    }
+    (run_dir / "config_snapshot.yaml").write_text(yaml.safe_dump(snapshot, sort_keys=False), encoding="utf-8")
     renderer = TrajectoryRenderer(world_size=float(env_cfg["world_size"]))
 
+    fixed_scene = _parse_fixed_scene(args, env_cfg)
     rows: List[Dict[str, Any]] = []
     total_safe_reach = 0
     total_agents = 0
     success_rounds = 0
     mean_return_sum = 0.0
-    feasible_sum = 0.0
-    feasible_cnt = 0
-    cbf_slack_sum = 0.0
-    cbf_slack_max = 0.0
-    cbf_slack_active = 0
-    cbf_slack_cnt = 0
+    relax_sum = 0.0
+    relax_max = 0.0
+    relax_cnt = 0
 
-    render_gif = bool(args.render_gif) or not bool(args.render_png)
+    render_enabled = bool(args.render_gif) or bool(args.render_png)
+    render_gif = bool(args.render_gif)
     n_episodes = max(1, int(args.episodes))
     for ep in range(n_episodes):
-        obs, _ = env.reset(seed=seed + ep)
+        if fixed_scene is not None:
+            obs, _ = env.reset(seed=seed + ep, states=fixed_scene["states"], obstacles=fixed_scene["obstacles"])
+        else:
+            obs, _ = env.reset(seed=seed + ep)
         agent_ids = sorted(obs.keys())
         reached_any = {aid: False for aid in agent_ids}
         unsafe_any = {aid: False for aid in agent_ids}
@@ -175,10 +197,11 @@ def main() -> None:
 
         terminated = False
         truncated = False
+        step_idx = 0
         while not (terminated or truncated):
             states_map = {s.agent_id: s for s in env.get_agent_states()}
             obs_low_map = {aid: obs[aid]["low"] for aid in agent_ids}
-            actions, solutions = baseline.solve_batch(states=states_map, obstacles=obstacles, obs_low=obs_low_map)
+            actions, relax = baseline.act(states=states_map, obs_low=obs_low_map)
             obs, rewards, terminated, truncated, info = env.step(actions)
 
             states_next = {s.agent_id: s for s in env.get_agent_states()}
@@ -186,22 +209,28 @@ def main() -> None:
             unsafe_row = np.asarray([bool(info.get("unsafe_flags", {}).get(aid, False)) for aid in agent_ids], dtype=bool)
             unsafe_trace.append(unsafe_row)
             wind_accel = np.asarray(info.get("wind_accel", np.zeros(2, dtype=np.float32)), dtype=np.float32).reshape(2)
+            mean_relax = float(np.mean([float(np.mean(relax[aid])) if relax[aid].size > 0 else 0.0 for aid in agent_ids]))
             frame_labels.append(
-                f"t={len(positions)-1}  wind=({wind_accel[0]:+0.2f}, {wind_accel[1]:+0.2f})  |w|={float(np.linalg.norm(wind_accel)):.2f}"
+                f"t={len(positions)-1}  wind=({wind_accel[0]:+0.2f}, {wind_accel[1]:+0.2f})  "
+                f"|w|={float(np.linalg.norm(wind_accel)):.2f}  relax={mean_relax:.4f}"
             )
 
             for aid in agent_ids:
                 ep_return[aid] += float(rewards[aid])
                 reached_any[aid] = bool(reached_any[aid] or bool(info.get("reach_flags", {}).get(aid, False)))
                 unsafe_any[aid] = bool(unsafe_any[aid] or bool(info.get("unsafe_flags", {}).get(aid, False)))
-                feasible_sum += 1.0 if bool(solutions[aid].feasible) else 0.0
-                feasible_cnt += 1
-                cbf_slack = np.asarray(solutions[aid].cbf_slack if solutions[aid].cbf_slack is not None else [], dtype=np.float32).reshape(-1)
-                if cbf_slack.size > 0:
-                    cbf_slack_sum += float(np.sum(cbf_slack))
-                    cbf_slack_max = max(cbf_slack_max, float(np.max(cbf_slack)))
-                    cbf_slack_active += int(np.sum(cbf_slack > 1e-6))
-                    cbf_slack_cnt += int(cbf_slack.size)
+                r = np.asarray(relax[aid], dtype=np.float32).reshape(-1)
+                if r.size > 0:
+                    relax_sum += float(np.sum(r))
+                    relax_max = max(relax_max, float(np.max(r)))
+                    relax_cnt += int(r.size)
+            step_idx += 1
+            if int(args.progress_interval) > 0 and (step_idx % int(args.progress_interval) == 0):
+                print(
+                    f"[progress] episode {ep + 1}/{n_episodes} step={step_idx} "
+                    f"terminated={terminated} truncated={truncated} relax={mean_relax:.4f}",
+                    flush=True,
+                )
 
         n_agents = max(1, len(agent_ids))
         safe_reach_count = int(sum(1 for aid in agent_ids if reached_any[aid] and not unsafe_any[aid]))
@@ -210,7 +239,7 @@ def main() -> None:
         mean_ret = float(sum(ep_return.values()) / n_agents)
 
         media_path = ""
-        if len(positions) > 0:
+        if render_enabled and len(positions) > 0:
             suffix = "gif" if render_gif else "png"
             out_path = run_dir / "media" / f"episode_{ep:03d}.{suffix}"
             media_path = _render_episode(
@@ -256,24 +285,20 @@ def main() -> None:
         "overall_safe_reach_ratio": float(total_safe_reach / max(1, total_agents)),
         "success_round_rate": float(success_rounds / max(1, n_episodes)),
         "episode_return_mean": float(mean_return_sum / max(1, n_episodes)),
-        "qp_feasible_rate": float(feasible_sum / max(1, feasible_cnt)),
-        "cbf_slack_mean": float(cbf_slack_sum / max(1, cbf_slack_cnt)),
-        "cbf_slack_max": float(cbf_slack_max),
-        "cbf_slack_active_rate": float(cbf_slack_active / max(1, cbf_slack_cnt)),
+        "relax_mean": float(relax_sum / max(1, relax_cnt)),
+        "relax_max": float(relax_max),
         "run_dir": str(run_dir),
     }
 
     _write_rows_csv(run_dir / "episode_results.csv", rows)
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    print("==== Baseline Summary ====")
+    print("==== GCBF-Style Handcrafted Baseline Summary ====")
     print(f"safe_reach_total: {total_safe_reach}/{total_agents} ({summary['overall_safe_reach_ratio']:.4f})")
     print(f"success_rounds: {success_rounds}/{n_episodes} ({summary['success_round_rate']:.4f})")
     print(f"mean_return: {summary['episode_return_mean']:.4f}")
-    print(f"qp_feasible_rate: {summary['qp_feasible_rate']:.4f}")
-    print(f"cbf_slack_mean: {summary['cbf_slack_mean']:.6f}")
-    print(f"cbf_slack_max: {summary['cbf_slack_max']:.6f}")
-    print(f"cbf_slack_active_rate: {summary['cbf_slack_active_rate']:.4f}")
+    print(f"relax_mean: {summary['relax_mean']:.6f}")
+    print(f"relax_max: {summary['relax_max']:.6f}")
     print(f"RUN_DIR={run_dir}")
 
 

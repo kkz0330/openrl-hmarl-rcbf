@@ -378,6 +378,16 @@ def _build_eval_trainer(cfg: Dict[str, Any], deterministic: bool) -> TrainerSync
         d_safe_obs=float(cfg["safety"]["d_safe_obs"]),
         u_min=[-action_limit, -action_limit],
         u_max=[action_limit, action_limit],
+        lidar_cbf_config={
+            "use_fitted_geometry": bool(cfg["env"].get("lidar_cbf_use_fitted_geometry", False)),
+            "point_radius": float(cfg["env"].get("lidar_cbf_point_radius", 0.0)),
+            "top_k": int(cfg["env"].get("lidar_cbf_top_k", 3)),
+            "min_segment_points": int(cfg["env"].get("lidar_cbf_min_segment_points", 2)),
+            "line_fit_max_residual": float(cfg["env"].get("lidar_cbf_line_fit_max_residual", 0.08)),
+            "circle_fit_max_residual": float(cfg["env"].get("lidar_cbf_circle_fit_max_residual", 0.08)),
+            "circle_radius_min": float(cfg["env"].get("lidar_cbf_circle_radius_min", 0.05)),
+            "circle_radius_max": float(cfg["env"].get("lidar_cbf_circle_radius_max", 100.0)),
+        },
     )
     qp_solver = DifferentiableQPSolver(
         action_dim=int(cfg["model"]["action_dim"]),
@@ -409,6 +419,10 @@ def _build_eval_trainer(cfg: Dict[str, Any], deterministic: bool) -> TrainerSync
     skill_params["rect_dual_edge_cbf_enabled"] = bool(cfg["env"].get("rect_dual_edge_cbf_enabled", False))
     skill_params["rect_dual_edge_proximity_distance"] = float(cfg["env"].get("rect_dual_edge_proximity_distance", 0.0))
     skill_params["rect_smooth_tau"] = float(cfg["env"].get("rect_smooth_tau", 0.1))
+    skill_params["lidar_obstacle_cbf_enabled"] = bool(cfg["env"].get("lidar_obstacle_cbf_enabled", True))
+    skill_params["obstacle_perception_range"] = float(cfg["env"].get("lidar_range", 3.0))
+    skill_params["lidar_cbf_point_radius"] = float(cfg["env"].get("lidar_cbf_point_radius", 0.0))
+    skill_params["lidar_cbf_top_k"] = int(cfg["env"].get("lidar_cbf_top_k", 3))
     runtime = SkillRuntimeManager(skills, default_ctx=skill_params)
     low_controller = LowLevelSafeController(
         low_policy=low_policy,

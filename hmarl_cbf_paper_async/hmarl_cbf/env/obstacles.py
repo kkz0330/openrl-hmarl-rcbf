@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List
 
 import numpy as np
+
+from hmarl_cbf.types import LIDAR_HIT_OBSTACLE
+
+if TYPE_CHECKING:
+    from hmarl_cbf.types import LidarScan
 
 
 Obstacle = Dict[str, Any]
@@ -41,6 +46,19 @@ def _point_segment_distance(point: np.ndarray, a: np.ndarray, b: np.ndarray) -> 
     return float(np.linalg.norm(point - proj))
 
 
+def _segment_segment_distance(a1: np.ndarray, a2: np.ndarray, b1: np.ndarray, b2: np.ndarray) -> float:
+    if _segments_intersect(a1, a2, b1, b2):
+        return 0.0
+    return float(
+        min(
+            _point_segment_distance(a1, b1, b2),
+            _point_segment_distance(a2, b1, b2),
+            _point_segment_distance(b1, a1, a2),
+            _point_segment_distance(b2, a1, a2),
+        )
+    )
+
+
 def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
     return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
 
@@ -68,6 +86,11 @@ def _point_in_convex_quad(point: np.ndarray, corners: np.ndarray) -> bool:
 def normalize_obstacle(item: Dict[str, Any]) -> Obstacle:
     obs_type = str(item.get("type", "circle")).strip().lower()
     center = _vec2(item["center"], "center")
+    if obs_type == "lidar_point":
+        radius = float(item.get("radius", 0.0))
+        if radius < 0.0:
+            raise ValueError("lidar_point radius must be nonnegative")
+        return {"type": "lidar_point", "center": center, "radius": radius}
     if obs_type == "point":
         radius = float(item.get("radius", 0.0))
         if radius < 0.0:
@@ -78,6 +101,20 @@ def normalize_obstacle(item: Dict[str, Any]) -> Obstacle:
         if radius <= 0.0:
             raise ValueError("circle obstacle radius must be positive")
         return {"type": "circle", "center": center, "radius": radius}
+    if obs_type == "lidar_circle":
+        radius = float(item["radius"])
+        if radius <= 0.0:
+            raise ValueError("lidar_circle radius must be positive")
+        return {"type": "lidar_circle", "center": center, "radius": radius}
+    if obs_type == "lidar_line":
+        start = _vec2(item["start"], "start")
+        end = _vec2(item["end"], "end")
+        return {
+            "type": "lidar_line",
+            "center": 0.5 * (start + end),
+            "start": start,
+            "end": end,
+        }
     if obs_type == "rect":
         if "half_extents" in item:
             half_extents = _vec2(item["half_extents"], "half_extents")
@@ -105,10 +142,21 @@ def normalize_obstacles(items: Iterable[Dict[str, Any]]) -> List[Obstacle]:
 
 def copy_obstacle(item: Dict[str, Any]) -> Obstacle:
     obs = normalize_obstacle(item)
+    if obs["type"] == "lidar_point":
+        return {"type": "lidar_point", "center": obs["center"].copy(), "radius": float(obs["radius"])}
     if obs["type"] == "point":
         return {"type": "point", "center": obs["center"].copy(), "radius": float(obs["radius"])}
     if obs["type"] == "circle":
         return {"type": "circle", "center": obs["center"].copy(), "radius": float(obs["radius"])}
+    if obs["type"] == "lidar_circle":
+        return {"type": "lidar_circle", "center": obs["center"].copy(), "radius": float(obs["radius"])}
+    if obs["type"] == "lidar_line":
+        return {
+            "type": "lidar_line",
+            "center": np.asarray(obs["center"], dtype=np.float32).reshape(2).copy(),
+            "start": np.asarray(obs["start"], dtype=np.float32).reshape(2).copy(),
+            "end": np.asarray(obs["end"], dtype=np.float32).reshape(2).copy(),
+        }
     return {
         "type": "rect",
         "center": obs["center"].copy(),
@@ -123,15 +171,19 @@ def obstacle_center(item: Dict[str, Any]) -> np.ndarray:
 
 def obstacle_bounding_radius(item: Dict[str, Any]) -> float:
     obs = normalize_obstacle(item)
-    if obs["type"] in ("point", "circle"):
+    if obs["type"] in ("point", "circle", "lidar_point", "lidar_circle"):
         return float(obs["radius"])
+    if obs["type"] == "lidar_line":
+        start = np.asarray(obs["start"], dtype=np.float32).reshape(2)
+        end = np.asarray(obs["end"], dtype=np.float32).reshape(2)
+        return 0.5 * float(np.linalg.norm(end - start))
     return float(np.linalg.norm(np.asarray(obs["half_extents"], dtype=np.float32).reshape(2)))
 
 
 def obstacle_corners(item: Dict[str, Any]) -> np.ndarray:
     obs = normalize_obstacle(item)
-    if obs["type"] == "circle":
-        raise ValueError("circle obstacles do not have corners")
+    if obs["type"] != "rect":
+        raise ValueError("only rect obstacles have corners")
     center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
     half_extents = np.asarray(obs["half_extents"], dtype=np.float32).reshape(2)
     yaw = float(obs.get("yaw", 0.0))
@@ -152,8 +204,12 @@ def obstacle_surface_distance(point: np.ndarray, item: Dict[str, Any]) -> float:
     obs = normalize_obstacle(item)
     point = _vec2(point, "point")
     center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
-    if obs["type"] in ("point", "circle"):
+    if obs["type"] in ("point", "circle", "lidar_point", "lidar_circle"):
         return float(np.linalg.norm(point - center) - float(obs["radius"]))
+    if obs["type"] == "lidar_line":
+        start = np.asarray(obs["start"], dtype=np.float32).reshape(2)
+        end = np.asarray(obs["end"], dtype=np.float32).reshape(2)
+        return float(_point_segment_distance(point, start, end))
 
     half_extents = np.asarray(obs["half_extents"], dtype=np.float32).reshape(2)
     yaw = float(obs.get("yaw", 0.0))
@@ -169,7 +225,7 @@ def obstacle_contact_geometry(point: np.ndarray, item: Dict[str, Any]) -> Dict[s
     obs = normalize_obstacle(item)
     point = _vec2(point, "point")
     center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
-    if obs["type"] in ("point", "circle"):
+    if obs["type"] in ("point", "circle", "lidar_point", "lidar_circle"):
         rel = point - center
         dist = float(np.linalg.norm(rel))
         radius = float(obs["radius"])
@@ -188,6 +244,30 @@ def obstacle_contact_geometry(point: np.ndarray, item: Dict[str, Any]) -> Dict[s
             "signed_surface": signed_surface,
             "sign": 1.0 if signed_surface >= 0.0 else -1.0,
             "active_mask": np.ones((2,), dtype=np.float32),
+        }
+    if obs["type"] == "lidar_line":
+        start = np.asarray(obs["start"], dtype=np.float32).reshape(2)
+        end = np.asarray(obs["end"], dtype=np.float32).reshape(2)
+        seg = end - start
+        seg_norm_sq = float(np.dot(seg, seg))
+        if seg_norm_sq <= 1e-10:
+            closest = start
+            tangent = np.asarray([1.0, 0.0], dtype=np.float32)
+        else:
+            tau = float(np.clip(np.dot(point - start, seg) / seg_norm_sq, 0.0, 1.0))
+            closest = start + tau * seg
+            tangent = seg / max(np.sqrt(seg_norm_sq), 1e-6)
+        offset = point - closest
+        return {
+            "type": "lidar_line",
+            "closest_point": closest.astype(np.float32),
+            "offset": offset.astype(np.float32),
+            "signed_surface": float(np.linalg.norm(offset)),
+            "sign": 1.0,
+            "active_mask": np.ones((2,), dtype=np.float32),
+            "start": start.astype(np.float32),
+            "end": end.astype(np.float32),
+            "tangent": tangent.astype(np.float32),
         }
 
     half_extents = np.asarray(obs["half_extents"], dtype=np.float32).reshape(2)
@@ -438,8 +518,351 @@ def rect_corner_margin_geometry(
     }
 
 
+def circle_barrier_geometry(
+    point: np.ndarray,
+    item: Dict[str, Any],
+    *,
+    inflation_margin: float,
+) -> Dict[str, Any]:
+    obs = normalize_obstacle(item)
+    if obs["type"] not in ("point", "circle", "lidar_point", "lidar_circle"):
+        raise ValueError("circle_barrier_geometry requires a point/circle-type obstacle")
+    point = _vec2(point, "point")
+    center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
+    effective_radius = float(max(0.0, obs.get("radius", 0.0)) + max(0.0, inflation_margin))
+    rel = point - center
+    barrier_h = float(np.dot(rel, rel) - effective_radius**2)
+    return {
+        "type": str(obs["type"]),
+        "barrier_h": barrier_h,
+        "barrier_grad": (2.0 * rel).astype(np.float32),
+        "barrier_hess": (2.0 * np.eye(2, dtype=np.float32)).astype(np.float32),
+        "effective_radius": effective_radius,
+        "center": center.astype(np.float32),
+    }
+
+
+def lidar_line_barrier_geometry(
+    point: np.ndarray,
+    item: Dict[str, Any],
+    *,
+    inflation_margin: float,
+) -> Dict[str, Any]:
+    obs = normalize_obstacle(item)
+    if obs["type"] != "lidar_line":
+        raise ValueError("lidar_line_barrier_geometry requires a lidar_line obstacle")
+    point = _vec2(point, "point")
+    start = np.asarray(obs["start"], dtype=np.float32).reshape(2)
+    end = np.asarray(obs["end"], dtype=np.float32).reshape(2)
+    seg = end - start
+    seg_norm_sq = float(np.dot(seg, seg))
+    if seg_norm_sq <= 1e-10:
+        return circle_barrier_geometry(
+            point,
+            {"type": "lidar_point", "center": start, "radius": 0.0},
+            inflation_margin=inflation_margin,
+        )
+
+    tangent = (seg / max(np.sqrt(seg_norm_sq), 1e-6)).astype(np.float32)
+    tangent_outer = np.outer(tangent, tangent).astype(np.float32)
+    eye = np.eye(2, dtype=np.float32)
+    tau = float(np.dot(point - start, seg) / seg_norm_sq)
+    tau_clamped = float(np.clip(tau, 0.0, 1.0))
+    closest = (start + tau_clamped * seg).astype(np.float32)
+    offset = (point - closest).astype(np.float32)
+    if 0.0 < tau < 1.0:
+        projector = (eye - tangent_outer).astype(np.float32)
+        grad = (2.0 * projector @ (point - start)).astype(np.float32)
+        hess = (2.0 * projector).astype(np.float32)
+    else:
+        grad = (2.0 * offset).astype(np.float32)
+        hess = (2.0 * eye).astype(np.float32)
+    barrier_h = float(np.dot(offset, offset) - max(0.0, inflation_margin) ** 2)
+    return {
+        "type": "lidar_line",
+        "barrier_h": barrier_h,
+        "barrier_grad": grad,
+        "barrier_hess": hess,
+        "closest_point": closest,
+        "start": start,
+        "end": end,
+        "tangent": tangent,
+        "projection_tau": tau_clamped,
+    }
+
+
+def obstacle_barrier_geometry(
+    point: np.ndarray,
+    item: Dict[str, Any],
+    *,
+    inflation_margin: float,
+    tau: float,
+) -> Dict[str, Any]:
+    obs = normalize_obstacle(item)
+    if obs["type"] in ("point", "circle", "lidar_point", "lidar_circle"):
+        return circle_barrier_geometry(point, obs, inflation_margin=inflation_margin)
+    if obs["type"] == "lidar_line":
+        return lidar_line_barrier_geometry(point, obs, inflation_margin=inflation_margin)
+    return rect_smooth_barrier_geometry(point, obs, inflation_margin=inflation_margin, tau=tau)
+
+
+def _wrap_segments(indices: np.ndarray, n_total: int) -> List[np.ndarray]:
+    if indices.size == 0:
+        return []
+    segments: List[List[int]] = [[int(indices[0])]]
+    for idx in indices[1:]:
+        if int(idx) == segments[-1][-1] + 1:
+            segments[-1].append(int(idx))
+        else:
+            segments.append([int(idx)])
+    if len(segments) > 1 and segments[0][0] == 0 and segments[-1][-1] == n_total - 1:
+        merged = segments[-1] + segments[0]
+        segments = [merged] + segments[1:-1]
+    return [np.asarray(seg, dtype=np.int32) for seg in segments]
+
+
+def _fit_line_segment(points: np.ndarray) -> Dict[str, Any]:
+    points = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    centroid = np.mean(points, axis=0).astype(np.float32)
+    centered = points - centroid.reshape(1, 2)
+    cov = centered.T @ centered / max(points.shape[0], 1)
+    eigvals, eigvecs = np.linalg.eigh(cov.astype(np.float32))
+    order = np.argsort(eigvals)[::-1]
+    tangent = eigvecs[:, order[0]].astype(np.float32)
+    tangent = tangent / max(float(np.linalg.norm(tangent)), 1e-6)
+    normal = np.asarray([-tangent[1], tangent[0]], dtype=np.float32)
+    projections = centered @ tangent.reshape(2, 1)
+    proj_min = float(np.min(projections))
+    proj_max = float(np.max(projections))
+    start = (centroid + proj_min * tangent).astype(np.float32)
+    end = (centroid + proj_max * tangent).astype(np.float32)
+    residuals = centered @ normal.reshape(2, 1)
+    rms_residual = float(np.sqrt(np.mean(np.square(residuals))) if points.shape[0] > 0 else 0.0)
+    return {
+        "type": "lidar_line",
+        "center": (0.5 * (start + end)).astype(np.float32),
+        "start": start,
+        "end": end,
+        "tangent": tangent.astype(np.float32),
+        "normal": normal.astype(np.float32),
+        "rms_residual": rms_residual,
+        "length": float(np.linalg.norm(end - start)),
+    }
+
+
+def _fit_circle_segment(points: np.ndarray) -> Dict[str, Any] | None:
+    points = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    if points.shape[0] < 3:
+        return None
+    x = points[:, 0].astype(np.float64)
+    y = points[:, 1].astype(np.float64)
+    A = np.stack([x, y, np.ones_like(x)], axis=1)
+    b = -(x * x + y * y)
+    try:
+        sol, *_ = np.linalg.lstsq(A, b, rcond=None)
+    except np.linalg.LinAlgError:
+        return None
+    a, b_coef, c = sol
+    center = np.asarray([-0.5 * a, -0.5 * b_coef], dtype=np.float32)
+    radius_sq = float(np.dot(center, center) - c)
+    if radius_sq <= 1e-10:
+        return None
+    radius = float(np.sqrt(radius_sq))
+    radial = np.linalg.norm(points - center.reshape(1, 2), axis=1)
+    rms_residual = float(np.sqrt(np.mean(np.square(radial - radius))))
+    return {
+        "type": "lidar_circle",
+        "center": center,
+        "radius": radius,
+        "rms_residual": rms_residual,
+    }
+
+
+def fit_lidar_local_obstacles(
+    scan: "LidarScan",
+    *,
+    max_range: float | None = None,
+    min_segment_points: int = 2,
+    line_fit_max_residual: float = 0.08,
+    circle_fit_max_residual: float = 0.08,
+    circle_radius_min: float = 0.05,
+    circle_radius_max: float = 100.0,
+) -> List[Obstacle]:
+    ranges = np.asarray(scan.ranges, dtype=np.float32).reshape(-1)
+    hit_points = np.asarray(scan.hit_points, dtype=np.float32).reshape(-1, 2)
+    hit_valid = np.asarray(scan.hit_valid, dtype=np.bool_).reshape(-1)
+    hit_kinds = np.asarray(scan.hit_kinds, dtype=np.int32).reshape(-1)
+    n_beam = int(ranges.shape[0])
+    perception_range = float(scan.max_range if max_range is None else max_range)
+    valid_mask = (
+        hit_valid
+        & (hit_kinds == int(LIDAR_HIT_OBSTACLE))
+        & (ranges <= perception_range + 1e-6)
+    )
+    indices = np.flatnonzero(valid_mask)
+    segments = _wrap_segments(indices, n_total=n_beam)
+    fitted: List[Obstacle] = []
+    min_segment_points = int(max(1, min_segment_points))
+    for seg in segments:
+        if int(seg.shape[0]) < min_segment_points:
+            continue
+        points = hit_points[seg]
+        if points.shape[0] == 1:
+            fitted.append({"type": "lidar_point", "center": points[0].astype(np.float32), "radius": 0.0})
+            continue
+
+        line_model = _fit_line_segment(points)
+        circle_model = _fit_circle_segment(points)
+        line_residual = float(line_model["rms_residual"])
+        circle_residual = float("inf")
+        if circle_model is not None:
+            circle_radius = float(circle_model["radius"])
+            if float(circle_radius_min) <= circle_radius <= float(circle_radius_max):
+                circle_residual = float(circle_model["rms_residual"])
+
+        line_ok = line_residual <= float(line_fit_max_residual)
+        circle_ok = circle_residual <= float(circle_fit_max_residual)
+        if circle_ok and (not line_ok or circle_residual < line_residual):
+            fitted.append(copy_obstacle(circle_model))
+        else:
+            fitted.append(copy_obstacle(line_model))
+    return fitted
+
+
+def extract_lidar_hit_point_obstacles(
+    scan: "LidarScan",
+    *,
+    max_range: float | None = None,
+    point_radius: float = 0.0,
+    top_k: int | None = None,
+) -> List[Obstacle]:
+    ranges = np.asarray(scan.ranges, dtype=np.float32).reshape(-1)
+    hit_points = np.asarray(scan.hit_points, dtype=np.float32).reshape(-1, 2)
+    hit_valid = np.asarray(scan.hit_valid, dtype=np.bool_).reshape(-1)
+    hit_kinds = np.asarray(scan.hit_kinds, dtype=np.int32).reshape(-1)
+    perception_range = float(scan.max_range if max_range is None else max_range)
+    point_radius = float(max(0.0, point_radius))
+
+    valid_mask = (
+        hit_valid
+        & (hit_kinds == int(LIDAR_HIT_OBSTACLE))
+        & (ranges <= perception_range + 1e-6)
+    )
+    indices = np.flatnonzero(valid_mask)
+    if indices.size > 1:
+        indices = indices[np.argsort(ranges[indices], kind="stable")]
+    if top_k is not None:
+        top_k_int = max(0, int(top_k))
+        if top_k_int == 0:
+            indices = np.zeros((0,), dtype=np.int32)
+        elif indices.size > top_k_int:
+            indices = indices[:top_k_int]
+    return [
+        {
+            "type": "lidar_point",
+            "center": hit_points[int(idx)].astype(np.float32),
+            "radius": point_radius,
+        }
+        for idx in indices
+    ]
+
+
+def extract_lidar_cbf_obstacles(
+    scan: "LidarScan",
+    *,
+    max_range: float | None = None,
+    use_fitted_geometry: bool = False,
+    point_radius: float = 0.0,
+    top_k: int | None = None,
+    min_segment_points: int = 2,
+    line_fit_max_residual: float = 0.08,
+    circle_fit_max_residual: float = 0.08,
+    circle_radius_min: float = 0.05,
+    circle_radius_max: float = 100.0,
+) -> List[Obstacle]:
+    perception_range = float(scan.max_range if max_range is None else max_range)
+    top_k_int = None if top_k is None else max(0, int(top_k))
+    if not bool(use_fitted_geometry):
+        return extract_lidar_hit_point_obstacles(
+            scan=scan,
+            max_range=perception_range,
+            point_radius=point_radius,
+            top_k=top_k_int,
+        )
+
+    fitted = fit_lidar_local_obstacles(
+        scan=scan,
+        max_range=perception_range,
+        min_segment_points=int(max(1, min_segment_points)),
+        line_fit_max_residual=float(max(0.0, line_fit_max_residual)),
+        circle_fit_max_residual=float(max(0.0, circle_fit_max_residual)),
+        circle_radius_min=float(max(0.0, circle_radius_min)),
+        circle_radius_max=float(max(circle_radius_min, circle_radius_max)),
+    )
+    fitted = [copy_obstacle(obs) for obs in fitted]
+    if top_k_int is not None:
+        if top_k_int == 0:
+            return []
+        fitted.sort(
+            key=lambda obs: float(
+                obstacle_surface_distance(
+                    np.asarray(scan.origin, dtype=np.float32).reshape(2),
+                    obs,
+                )
+            )
+        )
+        if len(fitted) > top_k_int:
+            fitted = fitted[:top_k_int]
+    return fitted
+
+
 def disk_collides_with_obstacle(point: np.ndarray, disk_radius: float, item: Dict[str, Any]) -> bool:
     return bool(obstacle_surface_distance(point, item) <= float(disk_radius))
+
+
+def segment_obstacle_clearance(start: np.ndarray, end: np.ndarray, item: Dict[str, Any]) -> float:
+    obs = normalize_obstacle(item)
+    start = _vec2(start, "start")
+    end = _vec2(end, "end")
+    center = np.asarray(obs["center"], dtype=np.float32).reshape(2)
+
+    if obs["type"] in ("point", "circle", "lidar_point", "lidar_circle"):
+        return float(_point_segment_distance(center, start, end) - float(obs["radius"]))
+
+    if obs["type"] == "lidar_line":
+        return float(
+            _segment_segment_distance(
+                start,
+                end,
+                np.asarray(obs["start"], dtype=np.float32).reshape(2),
+                np.asarray(obs["end"], dtype=np.float32).reshape(2),
+            )
+        )
+
+    corners = obstacle_corners(obs)
+    if _point_in_convex_quad(start, corners) or _point_in_convex_quad(end, corners):
+        return -1.0
+    for i in range(4):
+        c0 = corners[i]
+        c1 = corners[(i + 1) % 4]
+        if _segments_intersect(start, end, c0, c1):
+            return -1.0
+
+    best = float("inf")
+    for i in range(4):
+        c0 = corners[i]
+        c1 = corners[(i + 1) % 4]
+        best = min(best, _segment_segment_distance(start, end, c0, c1))
+    return float(best)
+
+
+def disk_swept_collides_with_obstacle(
+    start: np.ndarray,
+    end: np.ndarray,
+    disk_radius: float,
+    item: Dict[str, Any],
+) -> bool:
+    return bool(segment_obstacle_clearance(start, end, item) <= float(disk_radius))
 
 
 def obstacle_obstacle_clearance(a: Dict[str, Any], b: Dict[str, Any]) -> float:

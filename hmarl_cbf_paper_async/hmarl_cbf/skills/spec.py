@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 import numpy as np
 
 from hmarl_cbf.skills.library import build_default_skill_library
-from hmarl_cbf.types import AgentObsLow, AgentState, LidarScan, SkillSpec
+from hmarl_cbf.types import LIDAR_HIT_NONE, AgentObsLow, AgentState, LidarScan, SkillSpec
 
 
 def validate_skill_spec(skill: SkillSpec) -> None:
@@ -19,7 +19,15 @@ def validate_skill_spec(skill: SkillSpec) -> None:
     probe_obs = AgentObsLow(
         self_state=np.zeros(4, dtype=np.float32),
         goal_relative=np.ones(2, dtype=np.float32),
-        lidar_scan=LidarScan(ranges=np.ones(8, dtype=np.float32), max_range=8.0),
+        lidar_scan=LidarScan(
+            ranges=np.ones(8, dtype=np.float32),
+            max_range=8.0,
+            angles=np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False, dtype=np.float32),
+            origin=np.zeros(2, dtype=np.float32),
+            hit_points=np.zeros((8, 2), dtype=np.float32),
+            hit_valid=np.zeros(8, dtype=np.bool_),
+            hit_kinds=np.full(8, LIDAR_HIT_NONE, dtype=np.int32),
+        ),
         neighbor_summary=np.zeros(8, dtype=np.float32),
     )
     ctx: Dict[str, Any] = {"dt": 0.03}

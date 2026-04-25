@@ -15,8 +15,14 @@ env:
   lidar_range: 3.0
   lidar_noise_std: 0.0
   lidar_obstacle_cbf_enabled: true
+  lidar_cbf_use_fitted_geometry: true
   lidar_cbf_point_radius: 0.0
   lidar_cbf_top_k: 3
+  lidar_cbf_min_segment_points: 2
+  lidar_cbf_line_fit_max_residual: 0.08
+  lidar_cbf_circle_fit_max_residual: 0.08
+  lidar_cbf_circle_radius_min: 0.05
+  lidar_cbf_circle_radius_max: 100.0
   neighbor_radius: 3.0
   max_neighbors: 4
   min_start_goal_separation: 1.0
@@ -154,8 +160,14 @@ teacher_baseline:
   neighbor_radius: 3.0
   obstacle_range: 3.0
   velocity_limit: 2.0
+  lidar_cbf_use_fitted_geometry: true
   lidar_cbf_point_radius: 0.0
   lidar_cbf_top_k: 3
+  lidar_cbf_min_segment_points: 2
+  lidar_cbf_line_fit_max_residual: 0.08
+  lidar_cbf_circle_fit_max_residual: 0.08
+  lidar_cbf_circle_radius_min: 0.05
+  lidar_cbf_circle_radius_max: 100.0
   speed_kp: 1.2
   lqr_q_pos: 5.0
   lqr_q_vel: 5.0

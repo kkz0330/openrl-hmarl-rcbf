@@ -11,7 +11,7 @@ except ImportError:  # pragma: no cover - import-safe fallback
     torch = None  # type: ignore[assignment]
 
 from hmarl_cbf.control.constraint_builder import ConstraintBuilder
-from hmarl_cbf.env.obstacles import copy_obstacle, obstacle_surface_distance
+from hmarl_cbf.env.obstacles import copy_obstacle, extract_lidar_cbf_obstacles
 from hmarl_cbf.control.qp_solver import DifferentiableQPSolver
 from hmarl_cbf.types import AgentObsLow, AgentState, QPParam, QPProblem, QPSolution
 
@@ -128,17 +128,23 @@ class LowLevelSafeController:
         obstacles: list[Dict[str, np.ndarray | float]],
         obs_low: AgentObsLow,
     ) -> list[Dict[str, np.ndarray | float]]:
-        max_range = (
-            float(self.obstacle_perception_range)
-            if self.obstacle_perception_range is not None
-            else float(obs_low.lidar_scan.max_range)
+        del state_i, obstacles
+        scan = obs_low.lidar_scan
+        max_range = float(self.obstacle_perception_range) if self.obstacle_perception_range is not None else float(scan.max_range)
+        lidar_cfg = getattr(self.constraint_builder, "lidar_cbf_config", {})
+        perceived = extract_lidar_cbf_obstacles(
+            scan=scan,
+            max_range=max_range,
+            use_fitted_geometry=bool(lidar_cfg.get("use_fitted_geometry", False)),
+            point_radius=float(lidar_cfg.get("point_radius", 0.0)),
+            top_k=int(lidar_cfg.get("top_k", 0)) if int(lidar_cfg.get("top_k", 0)) > 0 else None,
+            min_segment_points=int(lidar_cfg.get("min_segment_points", 2)),
+            line_fit_max_residual=float(lidar_cfg.get("line_fit_max_residual", 0.08)),
+            circle_fit_max_residual=float(lidar_cfg.get("circle_fit_max_residual", 0.08)),
+            circle_radius_min=float(lidar_cfg.get("circle_radius_min", 0.05)),
+            circle_radius_max=float(lidar_cfg.get("circle_radius_max", 100.0)),
         )
-        perceived: list[Dict[str, np.ndarray | float]] = []
-        for obs in obstacles:
-            surface_distance = float(obstacle_surface_distance(state_i.position, obs))
-            if surface_distance <= max_range:
-                perceived.append(copy_obstacle(obs))
-        return perceived
+        return [copy_obstacle(obs) for obs in perceived]
 
     def solve_for_agent(
         self,

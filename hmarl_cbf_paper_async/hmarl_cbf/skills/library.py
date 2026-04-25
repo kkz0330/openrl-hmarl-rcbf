@@ -80,21 +80,26 @@ def _default_initiation(_: AgentState, __: Dict[str, Any]) -> bool:
     return True
 
 
+def _is_effectively_stationary(state: AgentState, ctx: Dict[str, Any]) -> bool:
+    eps = float(ctx.get("stationary_speed_epsilon", 1e-3))
+    return _state_speed(state) <= eps
+
+
 def _turn_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
-    return _state_speed(state) >= float(ctx.get("turn_min_speed", 0.2))
+    return not _is_effectively_stationary(state, ctx)
 
 
 def _accelerate_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
-    return _state_speed(state) <= float(ctx.get("accelerate_init_max_speed", 5.0))
+    del state, ctx
+    return True
 
 
 def _decelerate_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
-    min_speed = float(ctx.get("decelerate_init_min_speed", ctx.get("goal_speed_threshold", 0.1)))
-    return _state_speed(state) >= min_speed
+    return not _is_effectively_stationary(state, ctx)
 
 
 def _cruise_initiation(state: AgentState, ctx: Dict[str, Any]) -> bool:
-    return _state_speed(state) >= float(ctx.get("cruise_min_speed", 0.2))
+    return not _is_effectively_stationary(state, ctx)
 
 
 def _goal_reached(state: AgentState, ctx: Dict[str, Any]) -> bool:
@@ -184,6 +189,10 @@ def _safety_constraints_common(_: AgentState, ctx: Dict[str, Any]) -> Dict[str, 
         "rect_dual_edge_cbf_enabled": bool(ctx.get("rect_dual_edge_cbf_enabled", False)),
         "rect_dual_edge_proximity_distance": float(ctx.get("rect_dual_edge_proximity_distance", 0.0)),
         "rect_smooth_tau": float(ctx.get("rect_smooth_tau", 0.1)),
+        "lidar_obstacle_cbf_enabled": bool(ctx.get("lidar_obstacle_cbf_enabled", True)),
+        "obstacle_perception_range": float(ctx.get("obstacle_perception_range", 3.0)),
+        "lidar_cbf_point_radius": float(ctx.get("lidar_cbf_point_radius", 0.0)),
+        "lidar_cbf_top_k": int(ctx.get("lidar_cbf_top_k", 3)),
     }
 
 

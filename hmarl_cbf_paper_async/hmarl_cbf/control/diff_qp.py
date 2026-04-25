@@ -19,8 +19,9 @@ except ImportError:  # pragma: no cover - optional backend
     torch = None  # type: ignore[assignment]
     Tensor = object  # type: ignore[misc, assignment]
 
-from hmarl_cbf.env.obstacles import normalize_obstacle, rect_smooth_barrier_geometry
+from hmarl_cbf.env.obstacles import normalize_obstacle, obstacle_barrier_geometry, obstacle_surface_distance
 from hmarl_cbf.types import AgentState, QPParam
+from hmarl_cbf.control.qp_solver import solve_reduced_fallback_qp
 
 SPD_EPS = 1e-5
 
@@ -37,6 +38,13 @@ def _robust_margin_from_a_row(a_row: Tensor, bound: float, enabled: bool, dtype:
     if (not enabled) or bound <= 0.0:
         return torch.zeros((), dtype=dtype, device=device)
     return torch.linalg.norm(a_row) * torch.tensor(float(bound), dtype=dtype, device=device)
+
+
+def _pointwise_top_k(raw: int | None) -> int | None:
+    if raw is None:
+        return None
+    top_k = int(max(0, raw))
+    return top_k if top_k > 0 else None
 
 
 @dataclass(slots=True)
@@ -65,6 +73,9 @@ class DiffQPSolveResult:
     cbf_slack: Tensor
     b_cbf: Tensor
     b_clf: Tensor
+    feasible: bool
+    solver_status: str
+    used_fallback: bool
 
 
 class TorchDifferentiableQPSolver:
@@ -212,8 +223,9 @@ class TorchDifferentiableQPSolver:
                 constants.u_max.reshape(n_u),
                 cbf_slack_max,
                 solver_args={
-                    "solve_method": "ECOS",
-                    "max_iters": self.ecos_max_iters,
+                    "solve_method": "SCS",
+                    "max_iters": self.scs_max_iters,
+                    "eps": self.scs_eps,
                 },
             )
         except Exception:
@@ -231,22 +243,50 @@ class TorchDifferentiableQPSolver:
                     constants.u_max.reshape(n_u),
                     cbf_slack_max,
                     solver_args={
-                        "solve_method": "SCS",
-                        "max_iters": self.scs_max_iters,
-                        "eps": self.scs_eps,
+                        "solve_method": "ECOS",
+                        "max_iters": self.ecos_max_iters,
                     },
                 )
             except Exception:
-                action = -torch.linalg.pinv(H_mat) @ f_lin
-                action = torch.maximum(torch.minimum(action, constants.u_max.reshape(n_u)), constants.u_min.reshape(n_u))
-                slack = torch.zeros((1,), dtype=dtype, device=device)
-                cbf_slack = torch.zeros((m_cbf,), dtype=dtype, device=device)
+                from hmarl_cbf.types import QPProblem  # local import to avoid heavier import path at module load
+
+                fallback_problem = QPProblem(
+                    H_mat=H_mat.detach().cpu().numpy().astype(np.float32),
+                    f_lin=f_lin.detach().cpu().numpy().astype(np.float32),
+                    w_clf=w_clf.detach().cpu().numpy().astype(np.float32),
+                    w_cbf=w_cbf.detach().cpu().numpy().astype(np.float32),
+                    cbf_slack_max=cbf_slack_max.detach().cpu().numpy().astype(np.float32),
+                    A_cbf=constants.A_cbf.detach().cpu().numpy().astype(np.float32),
+                    b_cbf=b_cbf.detach().cpu().numpy().astype(np.float32),
+                    A_clf=constants.A_clf.detach().cpu().numpy().astype(np.float32),
+                    b_clf=b_clf.detach().cpu().numpy().astype(np.float32),
+                    u_min=constants.u_min.detach().cpu().numpy().astype(np.float32),
+                    u_max=constants.u_max.detach().cpu().numpy().astype(np.float32),
+                    delta_min=0.0,
+                )
+                fallback = solve_reduced_fallback_qp(
+                    fallback_problem,
+                    action_dim=n_u,
+                    ecos_max_iters=self.ecos_max_iters,
+                    scs_max_iters=self.scs_max_iters,
+                    scs_eps=self.scs_eps,
+                )
+                action = torch.as_tensor(fallback.action, dtype=dtype, device=device).reshape(n_u)
+                slack = torch.as_tensor(fallback.slack, dtype=dtype, device=device).reshape(1)
+                cbf_slack = torch.as_tensor(
+                    np.asarray(fallback.cbf_slack if fallback.cbf_slack is not None else np.zeros((m_cbf,), dtype=np.float32)),
+                    dtype=dtype,
+                    device=device,
+                ).reshape(m_cbf)
                 return DiffQPSolveResult(
                     action=action.reshape(n_u),
                     slack=slack.reshape(1),
                     cbf_slack=cbf_slack.reshape(m_cbf),
                     b_cbf=b_cbf.reshape(m_cbf),
                     b_clf=b_clf.reshape(m_clf),
+                    feasible=bool(fallback.feasible),
+                    solver_status=str(fallback.solver_status),
+                    used_fallback=True,
                 )
         action = outputs[0]
         slack = outputs[1]
@@ -257,6 +297,9 @@ class TorchDifferentiableQPSolver:
             cbf_slack=cbf_slack.reshape(m_cbf),
             b_cbf=b_cbf.reshape(m_cbf),
             b_clf=b_clf.reshape(m_clf),
+            feasible=True,
+            solver_status="optimal_scs",
+            used_fallback=False,
         )
 
 
@@ -283,10 +326,12 @@ def build_diff_constraint_constants(
     rect_dual_edge_cbf_enabled: bool = False,
     rect_dual_edge_proximity_distance: float = 0.0,
     rect_smooth_tau: float = 0.1,
+    lidar_cbf_top_k: int | None = None,
     robust_cbf: bool = False,
     disturbance_accel_max: float = 0.0,
     relative_disturbance_accel_max: float = 0.0,
     clf_v_des_speed: float = 0.8,
+    clf_v_des_vector: np.ndarray | List[float] | None = None,
     u_min: np.ndarray | List[float] = (-1.0, -1.0),
     u_max: np.ndarray | List[float] = (1.0, 1.0),
     device: str | None = None,
@@ -307,77 +352,80 @@ def build_diff_constraint_constants(
     cbf_h0dot_terms: List[Tensor] = []
     cbf_resp_terms: List[Tensor] = []
     cbf_robust_margin_terms: List[Tensor] = []
+    pointwise_top_k = _pointwise_top_k(lidar_cbf_top_k)
 
-    for state_j in neighbors:
-        p_j = torch.tensor(state_j.position, dtype=dtype, device=dev)
-        v_j = torch.tensor(state_j.velocity, dtype=dtype, device=dev)
-        p_rel = p_i - p_j
-        v_rel = v_i - v_j
-        if cbf_mode == "distributed_hocbf54":
-            a_row, h_term, hdot_term, const_term = _build_hocbf54_row_torch(
-                p_rel=p_rel,
-                v_rel=v_rel,
-                safe_distance=float(max(d_min_agent, cbf_eps)),
-                u_max=float(cbf_u_max),
-                share=float(cbf_share_agent),
-                eps=float(cbf_eps),
-                dtype=dtype,
-                device=dev,
+    if cbf_mode == "distributed_gcbfplus":
+        pointwise_candidates: List[Dict[str, Any]] = []
+        for state_j in neighbors:
+            p_j = torch.tensor(state_j.position, dtype=dtype, device=dev)
+            v_j = torch.tensor(state_j.velocity, dtype=dtype, device=dev)
+            p_rel = p_i - p_j
+            v_rel = v_i - v_j
+            pointwise_candidates.append(
+                {
+                    "a_row": (-2.0 * p_rel),
+                    "h0": torch.dot(p_rel, p_rel) - torch.tensor(float(max(d_min_agent, cbf_eps) ** 2), dtype=dtype, device=dev),
+                    "h0_dot": 2.0 * torch.dot(p_rel, v_rel),
+                    "const_term": 2.0 * torch.dot(v_rel, v_rel),
+                    "share": float(cbf_share_agent),
+                    "robust_bound": float(relative_disturbance_accel_max),
+                    "distance_key": float(torch.linalg.norm(p_rel).detach().cpu().item()),
+                }
             )
-            A_rows.append(a_row)
-            cbf_const_terms.append(const_term)
-            cbf_h_terms.append(h_term)
-            cbf_hdot_terms.append(hdot_term)
-            cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
-            cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-            cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
-            cbf_robust_margin_terms.append(
-                _robust_margin_from_a_row(a_row, float(relative_disturbance_accel_max), bool(robust_cbf), dtype, dev)
+        for obs in obstacles:
+            obs_norm = normalize_obstacle(obs)
+            geom = obstacle_barrier_geometry(
+                state_i.position,
+                obs_norm,
+                inflation_margin=d_safe_obs + (_rect_base_extra_margin(rect_base_margin_extra) if obs_norm["type"] == "rect" else 0.0),
+                tau=_rect_smooth_tau(float(rect_smooth_tau)),
             )
-        elif cbf_mode == "distributed_gcbfplus":
-            h0 = torch.dot(p_rel, p_rel) - torch.tensor(float(d_min_agent**2), dtype=dtype, device=dev)
-            h0_dot = 2.0 * torch.dot(p_rel, v_rel)
-            hddrift = 2.0 * torch.dot(v_rel, v_rel)
-            a_row = -2.0 * p_rel
+            grad = torch.tensor(np.asarray(geom["barrier_grad"], dtype=np.float32).reshape(2), dtype=dtype, device=dev)
+            hess = torch.tensor(np.asarray(geom["barrier_hess"], dtype=np.float32).reshape(2, 2), dtype=dtype, device=dev)
+            pointwise_candidates.append(
+                {
+                    "a_row": (-grad),
+                    "h0": torch.tensor(float(geom["barrier_h"]), dtype=dtype, device=dev),
+                    "h0_dot": torch.dot(grad, v_i),
+                    "const_term": torch.dot(v_i, hess @ v_i),
+                    "share": float(cbf_share_obs),
+                    "robust_bound": float(disturbance_accel_max),
+                    "distance_key": float(obstacle_surface_distance(state_i.position, obs_norm)),
+                }
+            )
+        if len(pointwise_candidates) > 1:
+            pointwise_candidates.sort(key=lambda item: float(item["distance_key"]))
+        if pointwise_top_k is not None and len(pointwise_candidates) > pointwise_top_k:
+            pointwise_candidates = pointwise_candidates[:pointwise_top_k]
+
+        for candidate in pointwise_candidates:
+            a_row = torch.as_tensor(candidate["a_row"], dtype=dtype, device=dev).reshape(2)
+            h0 = torch.as_tensor(candidate["h0"], dtype=dtype, device=dev).reshape(())
+            h0_dot = torch.as_tensor(candidate["h0_dot"], dtype=dtype, device=dev).reshape(())
+            hddrift = torch.as_tensor(candidate["const_term"], dtype=dtype, device=dev).reshape(())
             A_rows.append(a_row)
             cbf_const_terms.append(hddrift)
             cbf_h_terms.append(torch.zeros((), dtype=dtype, device=dev))
             cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
             cbf_h0_terms.append(h0)
             cbf_h0dot_terms.append(h0_dot)
-            cbf_resp_terms.append(torch.tensor(float(cbf_share_agent), dtype=dtype, device=dev))
+            cbf_resp_terms.append(torch.tensor(float(candidate["share"]), dtype=dtype, device=dev))
             cbf_robust_margin_terms.append(
-                _robust_margin_from_a_row(a_row, float(relative_disturbance_accel_max), bool(robust_cbf), dtype, dev)
+                _robust_margin_from_a_row(a_row, float(candidate["robust_bound"]), bool(robust_cbf), dtype, dev)
             )
-        else:
-            h = torch.dot(p_rel, p_rel) - torch.tensor(float(d_min_agent**2), dtype=dtype, device=dev)
-            h_dot = 2.0 * torch.dot(p_rel, v_rel)
-            cbf_const = 2.0 * torch.dot(v_rel, v_rel)
-            a_row = -2.0 * p_rel
-            A_rows.append(a_row)
-            cbf_const_terms.append(cbf_const)
-            cbf_h_terms.append(h)
-            cbf_hdot_terms.append(h_dot)
-            cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
-            cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-            cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
-            cbf_robust_margin_terms.append(
-                _robust_margin_from_a_row(a_row, float(relative_disturbance_accel_max), bool(robust_cbf), dtype, dev)
-            )
-
-    for obs in obstacles:
-        obs_norm = normalize_obstacle(obs)
-        center = torch.tensor(np.asarray(obs_norm["center"], dtype=np.float32).reshape(2), dtype=dtype, device=dev)
-        if obs_norm["type"] in ("circle", "point"):
-            radius = float(obs_norm["radius"])
-            p_rel = p_i - center
+    else:
+        for state_j in neighbors:
+            p_j = torch.tensor(state_j.position, dtype=dtype, device=dev)
+            v_j = torch.tensor(state_j.velocity, dtype=dtype, device=dev)
+            p_rel = p_i - p_j
+            v_rel = v_i - v_j
             if cbf_mode == "distributed_hocbf54":
                 a_row, h_term, hdot_term, const_term = _build_hocbf54_row_torch(
                     p_rel=p_rel,
-                    v_rel=v_i,
-                    safe_distance=float(max(radius + d_safe_obs, cbf_eps)),
+                    v_rel=v_rel,
+                    safe_distance=float(max(d_min_agent, cbf_eps)),
                     u_max=float(cbf_u_max),
-                    share=float(cbf_share_obs),
+                    share=float(cbf_share_agent),
                     eps=float(cbf_eps),
                     dtype=dtype,
                     device=dev,
@@ -390,27 +438,12 @@ def build_diff_constraint_constants(
                 cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
                 cbf_robust_margin_terms.append(
-                    _robust_margin_from_a_row(a_row, float(disturbance_accel_max), bool(robust_cbf), dtype, dev)
-                )
-            elif cbf_mode == "distributed_gcbfplus":
-                h0 = torch.dot(p_rel, p_rel) - torch.tensor(float((radius + d_safe_obs) ** 2), dtype=dtype, device=dev)
-                h0_dot = 2.0 * torch.dot(p_rel, v_i)
-                hddrift = 2.0 * torch.dot(v_i, v_i)
-                a_row = -2.0 * p_rel
-                A_rows.append(a_row)
-                cbf_const_terms.append(hddrift)
-                cbf_h_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_h0_terms.append(h0)
-                cbf_h0dot_terms.append(h0_dot)
-                cbf_resp_terms.append(torch.tensor(float(cbf_share_obs), dtype=dtype, device=dev))
-                cbf_robust_margin_terms.append(
-                    _robust_margin_from_a_row(a_row, float(disturbance_accel_max), bool(robust_cbf), dtype, dev)
+                    _robust_margin_from_a_row(a_row, float(relative_disturbance_accel_max), bool(robust_cbf), dtype, dev)
                 )
             else:
-                h = torch.dot(p_rel, p_rel) - torch.tensor(float((radius + d_safe_obs) ** 2), dtype=dtype, device=dev)
-                h_dot = 2.0 * torch.dot(p_rel, v_i)
-                cbf_const = 2.0 * torch.dot(v_i, v_i)
+                h = torch.dot(p_rel, p_rel) - torch.tensor(float(d_min_agent**2), dtype=dtype, device=dev)
+                h_dot = 2.0 * torch.dot(p_rel, v_rel)
+                cbf_const = 2.0 * torch.dot(v_rel, v_rel)
                 a_row = -2.0 * p_rel
                 A_rows.append(a_row)
                 cbf_const_terms.append(cbf_const)
@@ -420,44 +453,33 @@ def build_diff_constraint_constants(
                 cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
                 cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
                 cbf_robust_margin_terms.append(
-                    _robust_margin_from_a_row(a_row, float(disturbance_accel_max), bool(robust_cbf), dtype, dev)
+                    _robust_margin_from_a_row(a_row, float(relative_disturbance_accel_max), bool(robust_cbf), dtype, dev)
                 )
-        else:
-            rect_geom = rect_smooth_barrier_geometry(
+
+        for obs in obstacles:
+            obs_norm = normalize_obstacle(obs)
+            geom = obstacle_barrier_geometry(
                 state_i.position,
                 obs_norm,
-                inflation_margin=d_safe_obs + _rect_base_extra_margin(rect_base_margin_extra),
+                inflation_margin=d_safe_obs + (_rect_base_extra_margin(rect_base_margin_extra) if obs_norm["type"] == "rect" else 0.0),
                 tau=_rect_smooth_tau(float(rect_smooth_tau)),
             )
-            grad = torch.tensor(np.asarray(rect_geom["barrier_grad"], dtype=np.float32).reshape(2), dtype=dtype, device=dev)
-            hess = torch.tensor(np.asarray(rect_geom["barrier_hess"], dtype=np.float32).reshape(2, 2), dtype=dtype, device=dev)
-            h_val = torch.tensor(float(rect_geom["barrier_h"]), dtype=dtype, device=dev)
+            grad = torch.tensor(np.asarray(geom["barrier_grad"], dtype=np.float32).reshape(2), dtype=dtype, device=dev)
+            hess = torch.tensor(np.asarray(geom["barrier_hess"], dtype=np.float32).reshape(2, 2), dtype=dtype, device=dev)
+            h_val = torch.tensor(float(geom["barrier_h"]), dtype=dtype, device=dev)
             h_dot = torch.dot(grad, v_i)
             hddrift = torch.dot(v_i, hess @ v_i)
-            if cbf_mode == "distributed_gcbfplus":
-                a_row = -grad
-                A_rows.append(a_row)
-                cbf_const_terms.append(hddrift)
-                cbf_h_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_hdot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_h0_terms.append(h_val)
-                cbf_h0dot_terms.append(h_dot)
-                cbf_resp_terms.append(torch.tensor(float(cbf_share_obs), dtype=dtype, device=dev))
-                cbf_robust_margin_terms.append(
-                    _robust_margin_from_a_row(a_row, float(disturbance_accel_max), bool(robust_cbf), dtype, dev)
-                )
-            else:
-                a_row = -grad
-                A_rows.append(a_row)
-                cbf_const_terms.append(hddrift)
-                cbf_h_terms.append(h_val)
-                cbf_hdot_terms.append(h_dot)
-                cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
-                cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
-                cbf_robust_margin_terms.append(
-                    _robust_margin_from_a_row(a_row, float(disturbance_accel_max), bool(robust_cbf), dtype, dev)
-                )
+            a_row = -grad
+            A_rows.append(a_row)
+            cbf_const_terms.append(hddrift)
+            cbf_h_terms.append(h_val)
+            cbf_hdot_terms.append(h_dot)
+            cbf_h0_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_h0dot_terms.append(torch.zeros((), dtype=dtype, device=dev))
+            cbf_resp_terms.append(torch.ones((), dtype=dtype, device=dev))
+            cbf_robust_margin_terms.append(
+                _robust_margin_from_a_row(a_row, float(disturbance_accel_max), bool(robust_cbf), dtype, dev)
+            )
 
     if boundary_cbf and world_size > 0.0:
         xmin = float(-world_size + boundary_margin)
@@ -525,20 +547,23 @@ def build_diff_constraint_constants(
         cbf_resp = torch.stack(cbf_resp_terms, dim=0).to(dtype=dtype, device=dev)
         cbf_robust_margin = torch.stack(cbf_robust_margin_terms, dim=0).to(dtype=dtype, device=dev)
 
-    goal = torch.tensor(state_i.goal, dtype=dtype, device=dev)
-    goal_vec = goal - p_i
-    goal_norm = torch.linalg.norm(goal_vec)
-    if float(goal_norm.detach().cpu().item()) > 1e-6:
-        goal_dir = goal_vec / goal_norm
+    if clf_v_des_vector is not None:
+        v_des = torch.tensor(np.asarray(clf_v_des_vector, dtype=np.float32).reshape(2), dtype=dtype, device=dev)
     else:
-        v_norm = torch.linalg.norm(v_i)
-        if float(v_norm.detach().cpu().item()) > 1e-6:
-            goal_dir = v_i / v_norm
+        goal = torch.tensor(state_i.goal, dtype=dtype, device=dev)
+        goal_vec = goal - p_i
+        goal_norm = torch.linalg.norm(goal_vec)
+        if float(goal_norm.detach().cpu().item()) > 1e-6:
+            goal_dir = goal_vec / goal_norm
         else:
-            goal_dir = torch.tensor([1.0, 0.0], dtype=dtype, device=dev)
+            v_norm = torch.linalg.norm(v_i)
+            if float(v_norm.detach().cpu().item()) > 1e-6:
+                goal_dir = v_i / v_norm
+            else:
+                goal_dir = torch.tensor([1.0, 0.0], dtype=dtype, device=dev)
 
-    v_des_speed = torch.tensor(float(clf_v_des_speed), dtype=dtype, device=dev)
-    v_des = v_des_speed * goal_dir
+        v_des_speed = torch.tensor(float(clf_v_des_speed), dtype=dtype, device=dev)
+        v_des = v_des_speed * goal_dir
     v_err = v_i - v_des
     V = 0.5 * torch.dot(v_err, v_err)
     A_clf = v_err.reshape(1, 2).to(dtype=dtype, device=dev)

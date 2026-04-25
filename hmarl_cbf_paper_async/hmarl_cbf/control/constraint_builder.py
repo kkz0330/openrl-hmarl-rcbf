@@ -4,7 +4,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 
-from hmarl_cbf.env.obstacles import normalize_obstacle, rect_smooth_barrier_geometry
+from hmarl_cbf.env.obstacles import normalize_obstacle, obstacle_barrier_geometry, obstacle_surface_distance
 from hmarl_cbf.types import AgentState, QPParam, QPProblem
 
 
@@ -34,6 +34,78 @@ def _robust_margin(a_row: np.ndarray, bound: float, enabled: bool) -> float:
     return float(np.linalg.norm(np.asarray(a_row, dtype=np.float32).reshape(-1)) * bound)
 
 
+def _pointwise_top_k(defaults: Dict[str, Any], overrides: Dict[str, Any]) -> int | None:
+    raw = overrides.get("lidar_cbf_top_k", defaults.get("top_k", 0))
+    top_k = int(max(0, raw))
+    return top_k if top_k > 0 else None
+
+
+def _collect_pointwise_candidates(
+    state_i: AgentState,
+    neighbors: List[AgentState],
+    obstacles: List[Dict[str, np.ndarray | float]],
+    *,
+    d_min_agent: float,
+    d_safe_obs: float,
+    cbf_share_agent: float,
+    cbf_share_obs: float,
+    robust_cbf: bool,
+    disturbance_accel_max: float,
+    relative_disturbance_accel_max: float,
+    top_k: int | None,
+    rect_base_margin_extra: float,
+    rect_smooth_tau: float,
+) -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
+    for state_j in neighbors:
+        p_rel = (state_i.position - state_j.position).astype(np.float32)
+        v_rel = (state_i.velocity - state_j.velocity).astype(np.float32)
+        candidates.append(
+            {
+                "kind": "agent",
+                "a_row": (-2.0 * p_rel).astype(np.float32),
+                "h0": float(np.dot(p_rel, p_rel) - max(d_min_agent, 1e-4) ** 2),
+                "h0_dot": float(2.0 * np.dot(p_rel, v_rel)),
+                "const_term": float(2.0 * np.dot(v_rel, v_rel)),
+                "share": float(cbf_share_agent),
+                "robust_bound": float(relative_disturbance_accel_max),
+                "robust_enabled": bool(robust_cbf),
+                "distance_key": float(np.linalg.norm(p_rel)),
+            }
+        )
+
+    for obs in obstacles:
+        obs_norm = normalize_obstacle(obs)
+        vel = np.asarray(state_i.velocity, dtype=np.float32).reshape(2)
+        geom = obstacle_barrier_geometry(
+            state_i.position,
+            obs_norm,
+            inflation_margin=d_safe_obs + (rect_base_margin_extra if obs_norm["type"] == "rect" else 0.0),
+            tau=rect_smooth_tau,
+        )
+        grad = np.asarray(geom["barrier_grad"], dtype=np.float32).reshape(2)
+        hess = np.asarray(geom["barrier_hess"], dtype=np.float32).reshape(2, 2)
+        candidates.append(
+            {
+                "kind": "obstacle",
+                "a_row": (-grad).astype(np.float32),
+                "h0": float(geom["barrier_h"]),
+                "h0_dot": float(np.dot(grad, vel)),
+                "const_term": float(vel @ hess @ vel),
+                "share": float(cbf_share_obs),
+                "robust_bound": float(disturbance_accel_max),
+                "robust_enabled": bool(robust_cbf),
+                "distance_key": float(obstacle_surface_distance(state_i.position, obs_norm)),
+            }
+        )
+
+    if len(candidates) > 1:
+        candidates.sort(key=lambda item: item["distance_key"])
+    if top_k is not None and len(candidates) > top_k:
+        candidates = candidates[:top_k]
+    return candidates
+
+
 class ConstraintBuilder:
     """Builds distributed hard-CBF and soft-CLF constraints for one agent."""
 
@@ -43,11 +115,13 @@ class ConstraintBuilder:
         d_safe_obs: float = 0.6,
         u_min: np.ndarray | list[float] = (-1.0, -1.0),
         u_max: np.ndarray | list[float] = (1.0, 1.0),
+        lidar_cbf_config: Dict[str, Any] | None = None,
     ) -> None:
         self.d_min_agent = float(d_min_agent)
         self.d_safe_obs = float(d_safe_obs)
         self.u_min = np.asarray(u_min, dtype=np.float32).reshape(2)
         self.u_max = np.asarray(u_max, dtype=np.float32).reshape(2)
+        self.lidar_cbf_config = dict(lidar_cbf_config or {})
 
     def build_for_agent(
         self,
@@ -60,8 +134,16 @@ class ConstraintBuilder:
         constraint_overrides: Dict[str, Any] | None = None,
     ) -> QPProblem:
         overrides = dict(constraint_overrides or {})
-        d_min_agent = float(overrides.get("d_min_agent", self.d_min_agent))
-        d_safe_obs = float(overrides.get("d_safe_obs", self.d_safe_obs))
+        qp_d_min_agent = getattr(qp_param, "d_min_agent", None)
+        qp_d_safe_obs = getattr(qp_param, "d_safe_obs", None)
+        if qp_d_min_agent is not None:
+            d_min_agent = float(np.asarray(qp_d_min_agent).reshape(-1)[0])
+        else:
+            d_min_agent = float(overrides.get("d_min_agent", self.d_min_agent))
+        if qp_d_safe_obs is not None:
+            d_safe_obs = float(np.asarray(qp_d_safe_obs).reshape(-1)[0])
+        else:
+            d_safe_obs = float(overrides.get("d_safe_obs", self.d_safe_obs))
         use_input_bounds = bool(overrides.get("use_input_bounds", True))
         if use_input_bounds:
             u_min = np.asarray(overrides.get("u_min", self.u_min), dtype=np.float32).reshape(2)
@@ -75,6 +157,8 @@ class ConstraintBuilder:
         cbf_share_agent = float(overrides.get("cbf_share_agent", 0.5))
         cbf_share_obs = float(overrides.get("cbf_share_obs", 1.0))
         cbf_eps = float(overrides.get("cbf_eps", 1e-4))
+        pointwise_top_k = _pointwise_top_k(self.lidar_cbf_config, overrides)
+        use_clf = bool(overrides.get("use_clf", True))
         boundary_cbf = bool(overrides.get("boundary_cbf", False))
         world_size = float(overrides.get("world_size", 0.0))
         boundary_margin = float(overrides.get("boundary_margin", 0.0))
@@ -98,115 +182,79 @@ class ConstraintBuilder:
             else 1.0
         )
 
-        # Agent-agent CBF (distributed local neighbors only).
-        for state_j in neighbors:
-            p_rel = state_i.position - state_j.position
-            v_rel = state_i.velocity - state_j.velocity
-            if cbf_mode == "distributed_hocbf54":
-                a_row, h_term, hdot_term, const_term = _build_hocbf54_row(
-                    p_rel=p_rel,
-                    v_rel=v_rel,
-                    safe_distance=max(d_min_agent, 1e-4),
-                    u_max=cbf_u_max,
-                    share=cbf_share_agent,
-                    eps=cbf_eps,
-                )
-            elif cbf_mode == "distributed_gcbfplus":
-                # GCBF+ dec-share style for double-integrator pairwise barrier:
-                # h0 = ||p_rel||^2 - d_safe^2
-                # h1 = h0_dot + alpha0 * h0, with h0_dot = 2 p_rel^T v_rel
-                # -L_g h1 u_i <= resp * (L_f h1 + alpha1 * h1)
-                h0 = float(np.dot(p_rel, p_rel) - d_min_agent**2)
-                pv = float(np.dot(p_rel, v_rel))
-                h0_dot = 2.0 * pv
+        if cbf_mode == "distributed_gcbfplus":
+            for candidate in _collect_pointwise_candidates(
+                state_i,
+                neighbors,
+                obstacles,
+                d_min_agent=d_min_agent,
+                d_safe_obs=d_safe_obs,
+                cbf_share_agent=cbf_share_agent,
+                cbf_share_obs=cbf_share_obs,
+                robust_cbf=robust_cbf,
+                disturbance_accel_max=disturbance_accel_max,
+                relative_disturbance_accel_max=relative_disturbance_accel_max,
+                top_k=pointwise_top_k,
+                rect_base_margin_extra=_rect_base_extra_margin(overrides),
+                rect_smooth_tau=_rect_smooth_tau(overrides),
+            ):
+                a_row = np.asarray(candidate["a_row"], dtype=np.float32).reshape(2)
+                h0 = float(candidate["h0"])
+                h0_dot = float(candidate["h0_dot"])
+                const_term = float(candidate["const_term"])
                 alpha0 = k0 * hocbf_gamma_h
                 alpha1 = k1 * hocbf_gamma_hdot
                 h1 = h0_dot + alpha0 * h0
-                lf_h1 = 2.0 * float(np.dot(v_rel, v_rel)) + 2.0 * alpha0 * pv
-                a_row = (-2.0 * p_rel).astype(np.float32)  # -L_g h1 wrt u_i
-                b_row = cbf_share_agent * (lf_h1 + alpha1 * h1)
-                b_row -= _robust_margin(a_row, relative_disturbance_accel_max, robust_cbf)
+                lf_h1 = const_term + alpha0 * h0_dot
+                b_row = float(candidate["share"]) * (lf_h1 + alpha1 * h1)
+                b_row -= _robust_margin(a_row, float(candidate["robust_bound"]), bool(candidate["robust_enabled"]))
                 A_cbf_rows.append(a_row)
                 b_cbf_rows.append(float(b_row))
-                continue
-            else:
-                # ECBF-like linearization wrt u_i, distributed assumption on u_j.
-                h_term = float(np.dot(p_rel, p_rel) - d_min_agent**2)
-                hdot_term = float(2.0 * np.dot(p_rel, v_rel))
-                const_term = 2.0 * float(np.dot(v_rel, v_rel))
-                a_row = (-2.0 * p_rel).astype(np.float32)
-            b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
-            b_row -= _robust_margin(a_row, relative_disturbance_accel_max, robust_cbf)
-            A_cbf_rows.append(a_row)
-            b_cbf_rows.append(float(b_row))
-
-        # Agent-obstacle CBF (circle / point / rect obstacles).
-        for obs in obstacles:
-            obs_norm = normalize_obstacle(obs)
-            center = np.asarray(obs_norm["center"], dtype=np.float32).reshape(2)
-            if obs_norm["type"] in ("circle", "point"):
-                radius = float(obs_norm["radius"])
-                p_rel = state_i.position - center
+        else:
+            # Agent-agent CBF (distributed local neighbors only).
+            for state_j in neighbors:
+                p_rel = state_i.position - state_j.position
+                v_rel = state_i.velocity - state_j.velocity
                 if cbf_mode == "distributed_hocbf54":
                     a_row, h_term, hdot_term, const_term = _build_hocbf54_row(
                         p_rel=p_rel,
-                        v_rel=state_i.velocity,
-                        safe_distance=max(radius + d_safe_obs, 1e-4),
+                        v_rel=v_rel,
+                        safe_distance=max(d_min_agent, 1e-4),
                         u_max=cbf_u_max,
-                        share=cbf_share_obs,
+                        share=cbf_share_agent,
                         eps=cbf_eps,
                     )
-                elif cbf_mode == "distributed_gcbfplus":
-                    h0 = float(np.dot(p_rel, p_rel) - (radius + d_safe_obs) ** 2)
-                    pv = float(np.dot(p_rel, state_i.velocity))
-                    h0_dot = 2.0 * pv
-                    alpha0 = k0 * hocbf_gamma_h
-                    alpha1 = k1 * hocbf_gamma_hdot
-                    h1 = h0_dot + alpha0 * h0
-                    lf_h1 = 2.0 * float(np.dot(state_i.velocity, state_i.velocity)) + 2.0 * alpha0 * pv
-                    a_row = (-2.0 * p_rel).astype(np.float32)
-                    b_row = cbf_share_obs * (lf_h1 + alpha1 * h1)
-                    b_row -= _robust_margin(a_row, disturbance_accel_max, robust_cbf)
-                    A_cbf_rows.append(a_row)
-                    b_cbf_rows.append(float(b_row))
-                    continue
                 else:
-                    h_term = float(np.dot(p_rel, p_rel) - (radius + d_safe_obs) ** 2)
-                    hdot_term = float(2.0 * np.dot(p_rel, state_i.velocity))
-                    const_term = 2.0 * float(np.dot(state_i.velocity, state_i.velocity))
+                    # ECBF-like linearization wrt u_i, distributed assumption on u_j.
+                    h_term = float(np.dot(p_rel, p_rel) - d_min_agent**2)
+                    hdot_term = float(2.0 * np.dot(p_rel, v_rel))
+                    const_term = 2.0 * float(np.dot(v_rel, v_rel))
                     a_row = (-2.0 * p_rel).astype(np.float32)
-            else:
+                b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
+                b_row -= _robust_margin(a_row, relative_disturbance_accel_max, robust_cbf)
+                A_cbf_rows.append(a_row)
+                b_cbf_rows.append(float(b_row))
+
+            # Agent-obstacle CBF (circle / point / rect obstacles).
+            for obs in obstacles:
+                obs_norm = normalize_obstacle(obs)
                 vel = np.asarray(state_i.velocity, dtype=np.float32).reshape(2)
-                rect_geom = rect_smooth_barrier_geometry(
+                geom = obstacle_barrier_geometry(
                     state_i.position,
                     obs_norm,
-                    inflation_margin=d_safe_obs + _rect_base_extra_margin(overrides),
+                    inflation_margin=d_safe_obs + (_rect_base_extra_margin(overrides) if obs_norm["type"] == "rect" else 0.0),
                     tau=_rect_smooth_tau(overrides),
                 )
-                grad = np.asarray(rect_geom["barrier_grad"], dtype=np.float32).reshape(2)
-                hess = np.asarray(rect_geom["barrier_hess"], dtype=np.float32).reshape(2, 2)
-                h_term = float(rect_geom["barrier_h"])
+                grad = np.asarray(geom["barrier_grad"], dtype=np.float32).reshape(2)
+                hess = np.asarray(geom["barrier_hess"], dtype=np.float32).reshape(2, 2)
+                h_term = float(geom["barrier_h"])
                 hdot_term = float(np.dot(grad, vel))
                 const_term = float(vel @ hess @ vel)
                 a_row = (-grad).astype(np.float32)
-                if cbf_mode == "distributed_gcbfplus":
-                    alpha0 = k0 * hocbf_gamma_h
-                    alpha1 = k1 * hocbf_gamma_hdot
-                    h1 = hdot_term + alpha0 * h_term
-                    b_row = cbf_share_obs * (const_term + alpha0 * hdot_term + alpha1 * h1)
-                    b_row -= _robust_margin(a_row, disturbance_accel_max, robust_cbf)
-                    A_cbf_rows.append(a_row)
-                    b_cbf_rows.append(float(b_row))
-                    continue
                 b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
                 b_row -= _robust_margin(a_row, disturbance_accel_max, robust_cbf)
                 A_cbf_rows.append(a_row)
                 b_cbf_rows.append(float(b_row))
-                continue
-            b_row = const_term + (k1 * hocbf_gamma_hdot) * hdot_term + (k0 * hocbf_gamma_h) * h_term
-            b_row -= _robust_margin(a_row, disturbance_accel_max, robust_cbf)
-            A_cbf_rows.append(a_row)
-            b_cbf_rows.append(float(b_row))
 
         if boundary_cbf and world_size > 0.0:
             xmin = -world_size + boundary_margin
@@ -246,47 +294,53 @@ class ConstraintBuilder:
             A_cbf = np.zeros((0, 2), dtype=np.float32)
             b_cbf = np.zeros((0,), dtype=np.float32)
 
-        # Soft CLF (target-style): velocity tracking to desired goal-directed speed.
-        clf_k = float(np.asarray(qp_param.clf_k).reshape(-1)[0])
-        if "clf_v_des_vector" in overrides:
-            v_des = np.asarray(overrides["clf_v_des_vector"], dtype=np.float32).reshape(2)
-        else:
-            goal_vec = (state_i.goal - state_i.position).astype(np.float32)
-            goal_norm = float(np.linalg.norm(goal_vec))
-            if goal_norm > 1e-6:
-                goal_dir = goal_vec / goal_norm
+        if use_clf:
+            # Soft CLF (target-style): velocity tracking to desired goal-directed speed.
+            clf_k = float(np.asarray(qp_param.clf_k).reshape(-1)[0])
+            if "clf_v_des_vector" in overrides:
+                v_des = np.asarray(overrides["clf_v_des_vector"], dtype=np.float32).reshape(2)
             else:
-                vel_norm = float(np.linalg.norm(state_i.velocity))
-                if vel_norm > 1e-6:
-                    goal_dir = state_i.velocity / vel_norm
+                goal_vec = (state_i.goal - state_i.position).astype(np.float32)
+                goal_norm = float(np.linalg.norm(goal_vec))
+                if goal_norm > 1e-6:
+                    goal_dir = goal_vec / goal_norm
                 else:
-                    goal_dir = np.array([1.0, 0.0], dtype=np.float32)
+                    vel_norm = float(np.linalg.norm(state_i.velocity))
+                    if vel_norm > 1e-6:
+                        goal_dir = state_i.velocity / vel_norm
+                    else:
+                        goal_dir = np.array([1.0, 0.0], dtype=np.float32)
 
-            v_des_speed = float(
-                overrides.get(
-                    "clf_v_des_speed",
+                v_des_speed = float(
                     overrides.get(
-                        "target_speed",
+                        "clf_v_des_speed",
                         overrides.get(
-                            "cruise_ref_speed",
+                            "target_speed",
                             overrides.get(
-                                "decelerate_target_speed",
-                                overrides.get("ref_speed", 0.8),
+                                "cruise_ref_speed",
+                                overrides.get(
+                                    "decelerate_target_speed",
+                                    overrides.get("ref_speed", 0.8),
+                                ),
                             ),
                         ),
-                    ),
+                    )
                 )
-            )
-            slow_radius = float(overrides.get("slow_radius", 0.0))
-            if slow_radius > 0.0:
-                speed_scale = float(np.clip(goal_norm / slow_radius, 0.0, 1.0))
-                min_speed = float(overrides.get("goal_stop_min_speed", 0.0))
-                v_des_speed = max(min_speed, v_des_speed * speed_scale)
-            v_des = v_des_speed * goal_dir
-        v_err = state_i.velocity - v_des
-        V = float(0.5 * np.dot(v_err, v_err))
-        A_clf = v_err.reshape(1, 2).astype(np.float32)
-        b_clf = np.asarray([-clf_k * V], dtype=np.float32)
+                slow_radius = float(overrides.get("slow_radius", 0.0))
+                if slow_radius > 0.0:
+                    speed_scale = float(np.clip(goal_norm / slow_radius, 0.0, 1.0))
+                    min_speed = float(overrides.get("goal_stop_min_speed", 0.0))
+                    v_des_speed = max(min_speed, v_des_speed * speed_scale)
+                v_des = v_des_speed * goal_dir
+            v_err = state_i.velocity - v_des
+            V = float(0.5 * np.dot(v_err, v_err))
+            A_clf = v_err.reshape(1, 2).astype(np.float32)
+            b_clf = np.asarray([-clf_k * V], dtype=np.float32)
+            w_clf = float(np.asarray(qp_param.w_clf).reshape(-1)[0])
+        else:
+            A_clf = np.zeros((0, 2), dtype=np.float32)
+            b_clf = np.zeros((0,), dtype=np.float32)
+            w_clf = 0.0
 
         H_mat = np.asarray(qp_param.H_mat if H_override is None else H_override, dtype=np.float32).reshape(2, 2)
         H_mat = 0.5 * (H_mat + H_mat.T)
@@ -299,7 +353,7 @@ class ConstraintBuilder:
         return QPProblem(
             H_mat=H_mat,
             f_lin=f_lin,
-            w_clf=float(np.asarray(qp_param.w_clf).reshape(-1)[0]),
+            w_clf=w_clf,
             w_cbf=float(np.asarray(qp_param.w_cbf).reshape(-1)[0] if "w_cbf" not in overrides else overrides["w_cbf"]),
             cbf_slack_max=float(
                 np.asarray(qp_param.cbf_slack_max).reshape(-1)[0]
