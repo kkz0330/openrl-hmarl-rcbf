@@ -1,2 +1,0 @@
-scene_seed,steps,sim_seconds,safe_reach_count,n_agents,safe_reach_ratio,success_round,terminated,truncated,active_skill_ids,episode,media_path
-12345,76,7.6000000000000005,0,8,0.0,0,1,0,"{""0"": 4, ""1"": 0, ""2"": 0, ""3"": 4, ""4"": 2, ""5"": 1, ""6"": 1, ""7"": 2}",0,artifacts/hmarl_cbf_eval/eval_trapmix_resume_congested_8uav_once/media/episode_000.gif
