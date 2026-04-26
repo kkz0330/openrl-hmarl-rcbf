@@ -1,4 +1,0 @@
-iteration,steps_collected,episode_return_mean,safe_reach_ratio,high_samples,low_samples,loss_high_total,loss_low_mean,eval_eval_success_rate,eval_eval_collision_rate,eval_eval_reach_rate,eval_eval_qp_feasible_rate,eval_eval_avg_episode_return,eval_eval_avg_steps
-1.0,5.0,2.1,0.0,4.0,8.0,0.2,0.4,,,,,,
-2.0,5.0,2.2,0.0,4.0,8.0,0.2,0.4,0.7,0.1,0.7,1.0,3.0,10.0
-3.0,5.0,2.3,0.0,4.0,8.0,0.2,0.4,,,,,,
